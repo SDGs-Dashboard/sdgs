@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
 
 import { ProvinceCoveragePoint } from '../utils/types';
+import { withBasePath } from '../utils/site';
 
 interface RwandaMapSummaryProps {
   coverage: ProvinceCoveragePoint[];
@@ -104,7 +105,7 @@ const getFillColor = (value: number, maxValue: number): string => {
 
 export function RwandaMapSummary({
   coverage,
-  geojsonUrl = '/geo/rwanda-regions.geojson'
+  geojsonUrl = withBasePath('/geo/rwanda-regions.geojson')
 }: RwandaMapSummaryProps): JSX.Element {
   const maxCount = Math.max(...coverage.map((item) => item.indicatorCount), 0);
   const legendItems = [

@@ -4,6 +4,8 @@ import { useRouter } from 'next/router';
 import { FiDatabase, FiDownload, FiFlag, FiGrid, FiHome, FiSettings, FiX } from 'react-icons/fi';
 import clsx from 'clsx';
 
+import { isStaticExport } from '../utils/site';
+
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
@@ -19,6 +21,7 @@ const navItems = [
 
 export function Sidebar({ isOpen, onClose }: SidebarProps): JSX.Element {
   const router = useRouter();
+  const visibleNavItems = isStaticExport ? navItems.filter((item) => !item.href.startsWith('/admin')) : navItems;
 
   return (
     <>
@@ -67,7 +70,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps): JSX.Element {
         </div>
 
         <nav className="space-y-2">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const isActive =
               item.href === '/'
                 ? router.pathname === item.href || router.pathname === '/public'

@@ -62,8 +62,8 @@ Install these before local setup:
 ### 1. Clone from GitHub
 
 ```bash
-git clone https://github.com/Pieron23/Strategy_Development_Goals.git
-cd Strategy_Development_Goals
+git clone https://github.com/SDGs-Dashboard/sdgs.git
+cd sdgs
 git checkout develop
 ```
 
@@ -205,6 +205,7 @@ From the admin pages you can export:
 ```bash
 npm run dev
 npm run build
+npm run build:pages
 npm run start
 ```
 
@@ -223,6 +224,21 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 ## Troubleshooting
+
+### GitHub Pages deployment
+
+The public dashboard can be published to:
+
+- `https://sdgs-dashboard.github.io/sdgs/`
+
+How it works:
+
+- pushes to `develop` trigger `.github/workflows/deploy-to-staging.yml`
+- pushes to `production` trigger `.github/workflows/deploy-to-production.yml`
+- the Pages build exports only the public dashboard
+- admin automation and FastAPI APIs stay local-only and are not deployed to GitHub Pages
+
+Before the first deployment, make sure the repository Pages source is set to **GitHub Actions** in GitHub settings.
 
 ### Frontend says `Failed to fetch`
 

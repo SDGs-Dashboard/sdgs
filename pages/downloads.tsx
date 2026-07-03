@@ -5,6 +5,7 @@ import type { GetStaticProps } from 'next';
 import { FiDownload } from 'react-icons/fi';
 
 import { Layout } from '../components/Layout';
+import { withBasePath } from '../utils/site';
 import { getDashboardDataset } from '../utils/sdgData';
 
 interface DownloadsPageProps {
@@ -29,6 +30,12 @@ const formatBytes = (bytes: number): string => {
   }
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
+
+const toStaticDownloadUrl = (relativePath: string): string =>
+  `/approved-downloads/${relativePath.split('/').map((segment) => encodeURIComponent(segment)).join('/')}`;
+
+const toApiDownloadUrl = (relativePath: string): string =>
+  `/api/public/download/${relativePath.split('/').map((segment) => encodeURIComponent(segment)).join('/')}`;
 
 export default function DownloadsPage({ searchItems, years, goals, files }: DownloadsPageProps): JSX.Element {
   return (
@@ -61,7 +68,7 @@ export default function DownloadsPage({ searchItems, years, goals, files }: Down
                     <td className="px-3 py-2">{new Date(file.updatedAt).toLocaleDateString('en-RW')}</td>
                     <td className="px-3 py-2">
                       <a
-                        href={file.url}
+                        href={withBasePath(file.url)}
                         className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 font-semibold text-rwNavy hover:bg-slate-50"
                       >
                         <FiDownload className="h-3.5 w-3.5" />
@@ -92,6 +99,7 @@ const listApprovedFiles = (): Array<{
   updatedAt: string;
   url: string;
 }> => {
+  const isStaticBuild = process.env.NEXT_PUBLIC_STATIC_EXPORT === 'true';
   const root = path.join(process.cwd(), 'data', 'approved');
   if (!fs.existsSync(root)) {
     return [];
@@ -120,7 +128,7 @@ const listApprovedFiles = (): Array<{
           relativePath,
           sizeBytes: stats.size,
           updatedAt: stats.mtime.toISOString(),
-          url: `/api/public/download/${relativePath}`
+          url: isStaticBuild ? toStaticDownloadUrl(relativePath) : toApiDownloadUrl(relativePath)
         });
       }
     }

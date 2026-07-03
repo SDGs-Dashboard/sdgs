@@ -11,6 +11,7 @@ import { MetadataPanel } from '../../components/MetadataPanel';
 import { DisaggregationChart } from '../../components/charts/DisaggregationChart';
 import { TrendChart } from '../../components/charts/TrendChart';
 import { formatNumber, fromIndicatorSlug, publicStatusLabel, statusClassName, toIndicatorSlug } from '../../utils/format';
+import { isStaticExport } from '../../utils/site';
 import { getDashboardDataset, getIndicatorCodes, getIndicatorDetail } from '../../utils/sdgData';
 import { IndicatorDetail } from '../../utils/types';
 
@@ -19,6 +20,7 @@ interface IndicatorDetailPageProps {
   years: number[];
   goals: number[];
   detail: IndicatorDetail;
+  initialSourceRows: IndicatorSourceRow[];
 }
 
 interface IndicatorSourceRow {
@@ -41,10 +43,11 @@ export default function IndicatorDetailPage({
   searchItems,
   years,
   goals,
-  detail
+  detail,
+  initialSourceRows
 }: IndicatorDetailPageProps): JSX.Element {
   const router = useRouter();
-  const [sourceRows, setSourceRows] = useState<IndicatorSourceRow[] | null>(null);
+  const [sourceRows, setSourceRows] = useState<IndicatorSourceRow[] | null>(initialSourceRows);
   const [sourceLoading, setSourceLoading] = useState(false);
   const [sourceError, setSourceError] = useState('');
 
@@ -77,6 +80,11 @@ export default function IndicatorDetailPage({
       : `${Math.max(0, Math.min(100, Math.round(summary.targetProgressPercent)))}%`;
 
   const loadSources = async () => {
+    if (isStaticExport) {
+      setSourceRows(initialSourceRows);
+      return;
+    }
+
     setSourceError('');
     setSourceLoading(true);
     try {
@@ -190,7 +198,7 @@ export default function IndicatorDetailPage({
                 onClick={() => void loadSources()}
                 className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
-                View Source
+                {isStaticExport ? 'Approved Source Log' : 'Refresh Source Log'}
               </button>
               <button
                 type="button"
@@ -296,6 +304,11 @@ export const getStaticProps: GetStaticProps<IndicatorDetailPageProps> = async ({
 
   const dataset = getDashboardDataset();
   const safeDetail = JSON.parse(JSON.stringify(detail)) as IndicatorDetail;
+  const { readAdminDb } = await import('../../lib/admin/db');
+  const normalizedCode = code.trim().toLowerCase();
+  const initialSourceRows = readAdminDb()
+    .source_log.filter((row) => row.indicator_code.trim().toLowerCase() === normalizedCode)
+    .sort((a, b) => b.approved_at.localeCompare(a.approved_at));
 
   return {
     props: {
@@ -307,7 +320,8 @@ export const getStaticProps: GetStaticProps<IndicatorDetailPageProps> = async ({
       })),
       years: dataset.filters.years,
       goals: dataset.filters.goals,
-      detail: safeDetail
+      detail: safeDetail,
+      initialSourceRows: JSON.parse(JSON.stringify(initialSourceRows)) as IndicatorSourceRow[]
     }
   };
 };
