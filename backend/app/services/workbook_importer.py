@@ -1,0 +1,446 @@
+from __future__ import annotations
+
+import re
+import shutil
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from openpyxl import load_workbook
+
+from ..database import CONTROL_WORKBOOK_PATH, EXPORTS_DIR, execute, fetch_one, get_connection, init_db, init_storage, table_count
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def generate_id(prefix: str, index: int) -> str:
+    return f"{prefix}-{index:03d}"
+
+
+def to_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def to_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_table_reference(reference: Any) -> tuple[str | None, str | None]:
+    raw_value = str(reference or "").strip()
+    if not raw_value:
+        return None, None
+
+    compact_value = " ".join(raw_value.replace("\n", " ").split())
+    match = re.match(r"^(table|figure)\s+([a-z0-9]+(?:\s*\.\s*[a-z0-9]+)*)\s*[:.-]?\s*(.*)$", compact_value, re.IGNORECASE)
+    if not match:
+        return None, compact_value
+
+    item_type, number, title = match.groups()
+    normalized_number = re.sub(r"\s*\.\s*", ".", number.strip())
+    table_number = f"{item_type.title()} {normalized_number}"
+    clean_title = title.strip(" :.-") or compact_value
+    return table_number, clean_title
+
+
+def infer_report_family(data_source: str) -> str | None:
+    normalized = (data_source or "").lower()
+    if "eicv" in normalized:
+        return "EICV"
+    if "rphc" in normalized or "census" in normalized:
+        return "Census"
+    if "dhs" in normalized:
+        return "DHS"
+    return None
+
+
+def infer_row_label(ref_area: str, province: str, district: str, urbanization: str) -> str | None:
+    if district:
+        return district
+    if province:
+        return province
+    if urbanization:
+        return urbanization
+    if ref_area.upper() in {"RW", "RWA", "Rwanda".upper()}:
+        return "Rwanda"
+    return None
+
+
+def workbook_exists() -> bool:
+    return CONTROL_WORKBOOK_PATH.exists()
+
+
+def copy_control_workbook(source_path: str | Path) -> str:
+    init_storage()
+    source = Path(source_path)
+    shutil.copy2(source, CONTROL_WORKBOOK_PATH)
+    return str(CONTROL_WORKBOOK_PATH)
+
+
+def import_control_workbook(workbook_path: str | Path | None = None, *, force: bool = False) -> dict[str, Any]:
+    init_storage()
+    init_db()
+
+    workbook_file = Path(workbook_path) if workbook_path else CONTROL_WORKBOOK_PATH
+    if not workbook_file.exists():
+        raise FileNotFoundError(f"Control workbook not found at {workbook_file}")
+
+    if table_count("source_mapping") > 0 and not force:
+        return {
+            "imported": False,
+            "workbook_path": str(workbook_file),
+            "indicators": table_count("indicators"),
+            "mappings": table_count("source_mapping"),
+            "dashboard_rows": table_count("dashboard_data"),
+            "reports": table_count("reports"),
+        }
+
+    workbook = load_workbook(workbook_file, read_only=True, data_only=True)
+    now = utc_now()
+    mapping_seeds: dict[tuple[str, str], dict[str, Any]] = {}
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.executescript(
+            """
+            DELETE FROM approved_updates;
+            DELETE FROM proposed_updates;
+            DELETE FROM extracted_tables;
+            DELETE FROM reports
+            WHERE COALESCE(original_file_name, '') = ''
+               OR report_type = 'pending';
+            DELETE FROM source_mapping;
+            DELETE FROM dashboard_data;
+            DELETE FROM indicators;
+            """
+        )
+
+        data_sheet = workbook["Data"]
+        data_headers = [cell for cell in next(data_sheet.iter_rows(min_row=1, max_row=1, values_only=True))]
+        year_columns = [(index, int(header)) for index, header in enumerate(data_headers) if isinstance(header, int)]
+        table_ref_index = data_headers.index("Table name and number") if "Table name and number" in data_headers else None
+
+        for row_number, row in enumerate(data_sheet.iter_rows(min_row=2, values_only=True), start=2):
+            indicator = str(row[0] or "").strip()
+            series = str(row[1] or "").strip()
+            series_code = str(row[2] or "").strip()
+            unit_code = str(row[4] or "").strip()
+            data_source = str(row[14] or "").strip()
+            description = str(row[15] or "").strip()
+            ref_area = str(row[7] or "").strip()
+            province = str(row[8] or "").strip()
+            district = str(row[9] or "").strip()
+            urbanization = str(row[10] or "").strip()
+            education = str(row[12] or "").strip()
+            age = str(row[18] or "").strip()
+            sex = str(row[20] or "").strip()
+            table_reference = str(row[table_ref_index] or "").strip() if table_ref_index is not None else ""
+            if not indicator:
+                continue
+
+            latest_year = None
+            latest_value = None
+            for column_index, year in year_columns:
+                value = to_float(row[column_index])
+                if value is not None:
+                    latest_year = year
+                    latest_value = value
+
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO indicators (
+                    indicator_code, series, series_code, dashboard_description, unit_code,
+                    data_source, latest_year, latest_value, geography, disaggregation,
+                    source_table_reference, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    indicator,
+                    series,
+                    series_code or None,
+                    description,
+                    unit_code or None,
+                    data_source or None,
+                    latest_year,
+                    latest_value,
+                    ref_area or "RW",
+                    None,
+                    table_reference or None,
+                    "{}",
+                    now,
+                    now,
+                ),
+                )
+
+            table_no, table_title = parse_table_reference(table_reference)
+            mapping_key = (indicator, series_code or "")
+            mapping_seed = mapping_seeds.get(mapping_key, {})
+            mapping_seeds[mapping_key] = {
+                "indicator": indicator,
+                "series": series,
+                "series_code": series_code or None,
+                "dashboard_description": description or None,
+                "unit_code": unit_code or None,
+                "data_source": data_source or None,
+                "latest_year": latest_year,
+                "latest_value": latest_value,
+                "report_family": infer_report_family(data_source),
+                "report_year": latest_year,
+                "file_type": "pdf+excel",
+                "table_no": table_no,
+                "table_title": table_title,
+                "report_indicator_name": description or series or None,
+                "row_label": infer_row_label(ref_area, province, district, urbanization),
+                "source_table_reference": table_reference or None,
+                "existing": mapping_seed.get("existing", False),
+            }
+
+            for column_index, year in year_columns:
+                cursor.execute(
+                    """
+                    INSERT INTO dashboard_data (
+                        indicator, series, series_code, unit_code, data_source, description,
+                        ref_area, province, district, urbanization, education, age, sex, year,
+                        value, table_name_and_number, source_row_number, source_year_column, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        indicator,
+                        series,
+                        series_code or None,
+                        unit_code or None,
+                        data_source or None,
+                        description or None,
+                        ref_area or None,
+                        province or None,
+                        district or None,
+                        urbanization or None,
+                        education or None,
+                        age or None,
+                        sex or None,
+                        year,
+                        to_float(row[column_index]),
+                        table_reference or None,
+                        row_number,
+                        str(year),
+                        now,
+                        now,
+                    ),
+                )
+
+        mapping_sheet = workbook["NISR_Source_Mapping"]
+        mapping_headers = [str(cell or "").strip() for cell in next(mapping_sheet.iter_rows(min_row=1, max_row=1, values_only=True))]
+        imported_mapping_keys: set[tuple[str, str]] = set()
+        for index, row in enumerate(mapping_sheet.iter_rows(min_row=2, values_only=True), start=1):
+            payload = {mapping_headers[position]: row[position] for position in range(len(mapping_headers))}
+            if not payload.get("Indicator"):
+                continue
+            mapping_id = str(payload.get("Mapping_ID") or generate_id("MAP", index))
+            indicator = str(payload.get("Indicator") or "").strip()
+            series_code = str(payload.get("Series_Code") or "").strip()
+            seed = mapping_seeds.get((indicator, series_code), {})
+            seed_table_no = seed.get("table_no")
+            seed_table_title = seed.get("table_title")
+            seed_report_family = seed.get("report_family")
+            seed_report_indicator_name = seed.get("report_indicator_name")
+            seed_row_label = seed.get("row_label")
+            cursor.execute(
+                """
+                INSERT INTO source_mapping (
+                    mapping_id, indicator, series, series_code, dashboard_description, unit_code,
+                    data_source, latest_year, latest_value, report_family, report_name, report_year,
+                    file_type, file_name_or_link, sheet_or_page, table_no, table_title,
+                    report_indicator_name, row_label, column_label, geography, disaggregation,
+                    extraction_method, confidence, status, reviewer, notes, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    mapping_id,
+                    indicator,
+                    str(payload.get("Series") or "").strip() or None,
+                    series_code or None,
+                    str(payload.get("Dashboard_Description") or "").strip() or seed.get("dashboard_description"),
+                    str(payload.get("Unit_Code") or "").strip() or seed.get("unit_code"),
+                    str(payload.get("Data_Source") or "").strip() or seed.get("data_source"),
+                    to_int(payload.get("Latest_Year")) or seed.get("latest_year"),
+                    to_float(payload.get("Latest_Value")) if payload.get("Latest_Value") not in (None, "") else seed.get("latest_value"),
+                    str(payload.get("Report_Family") or "").strip() or seed_report_family,
+                    str(payload.get("Report_Name") or "").strip() or None,
+                    to_int(payload.get("Report_Year")) or seed.get("report_year"),
+                    str(payload.get("File_Type") or "").strip() or seed.get("file_type"),
+                    str(payload.get("File_Name_or_Link") or "").strip() or None,
+                    str(payload.get("Sheet_or_Page") or "").strip() or None,
+                    str(payload.get("Table_No") or "").strip() or seed_table_no,
+                    str(payload.get("Table_Title") or "").strip() or seed_table_title,
+                    str(payload.get("Report_Indicator_Name") or "").strip() or seed_report_indicator_name,
+                    str(payload.get("Row_Label") or "").strip() or seed_row_label,
+                    str(payload.get("Column_Label") or "").strip() or None,
+                    str(payload.get("Geography") or "").strip() or None,
+                    str(payload.get("Disaggregation") or "").strip() or None,
+                    str(payload.get("Extraction_Method") or "").strip() or None,
+                    str(payload.get("Confidence") or "").strip() or None,
+                    str(payload.get("Status") or "").strip() or None,
+                    str(payload.get("Reviewer") or "").strip() or None,
+                    str(payload.get("Notes") or "").strip() or None,
+                    now,
+                    now,
+                ),
+            )
+            imported_mapping_keys.add((indicator, series_code))
+
+        auto_mapping_index = len(imported_mapping_keys) + 1
+        for mapping_key, seed in mapping_seeds.items():
+            if mapping_key in imported_mapping_keys:
+                continue
+            if not seed.get("table_no") and not seed.get("table_title"):
+                continue
+            mapping_id = f"AUTO-{auto_mapping_index:03d}"
+            auto_mapping_index += 1
+            cursor.execute(
+                """
+                INSERT INTO source_mapping (
+                    mapping_id, indicator, series, series_code, dashboard_description, unit_code,
+                    data_source, latest_year, latest_value, report_family, report_name, report_year,
+                    file_type, file_name_or_link, sheet_or_page, table_no, table_title,
+                    report_indicator_name, row_label, column_label, geography, disaggregation,
+                    extraction_method, confidence, status, reviewer, notes, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    mapping_id,
+                    seed["indicator"],
+                    seed.get("series"),
+                    seed.get("series_code"),
+                    seed.get("dashboard_description"),
+                    seed.get("unit_code"),
+                    seed.get("data_source"),
+                    seed.get("latest_year"),
+                    seed.get("latest_value"),
+                    seed.get("report_family"),
+                    None,
+                    seed.get("report_year"),
+                    seed.get("file_type"),
+                    None,
+                    None,
+                    seed.get("table_no"),
+                    seed.get("table_title"),
+                    seed.get("report_indicator_name"),
+                    seed.get("row_label"),
+                    None,
+                    None,
+                    None,
+                    "Workbook auto-mapping",
+                    "Medium",
+                    "Auto-mapped",
+                    None,
+                    f"Generated from Data sheet source reference: {seed.get('source_table_reference') or ''}".strip(),
+                    now,
+                    now,
+                ),
+            )
+
+        register_sheet = workbook["Report_Register"]
+        register_headers = [str(cell or "").strip() for cell in next(register_sheet.iter_rows(min_row=1, max_row=1, values_only=True))]
+        for index, row in enumerate(register_sheet.iter_rows(min_row=2, values_only=True), start=1):
+            payload = {register_headers[position]: row[position] for position in range(len(register_headers))}
+            report_family = str(payload.get("Report_Family") or "").strip()
+            report_id = str(payload.get("Report_ID") or generate_id("REP", index))
+            if not report_family and not payload.get("Report_Name"):
+                continue
+            cursor.execute(
+                """
+                INSERT INTO reports (
+                    report_id, report_name, report_family, report_type, source_institution,
+                    publication_year, file_path, original_file_name, upload_date, status,
+                    extraction_summary, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    report_id,
+                    str(payload.get("Report_Name") or report_family or report_id),
+                    report_family or None,
+                    str(payload.get("File_Type") or "pending"),
+                    "NISR",
+                    to_int(payload.get("Report_Year")),
+                    str(payload.get("File_Name_or_Link") or "").strip() or None,
+                    None,
+                    now,
+                    str(payload.get("Status") or "Not Started"),
+                    "Imported from Report_Register",
+                    "{}",
+                ),
+            )
+
+        connection.commit()
+
+    return {
+        "imported": True,
+        "workbook_path": str(workbook_file),
+        "indicators": table_count("indicators"),
+        "mappings": table_count("source_mapping"),
+        "dashboard_rows": table_count("dashboard_data"),
+        "reports": table_count("reports"),
+    }
+
+
+def export_updated_dashboard_workbook() -> Path:
+    if not CONTROL_WORKBOOK_PATH.exists():
+        raise FileNotFoundError("Control workbook is missing.")
+
+    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    export_path = EXPORTS_DIR / f"updated_sdg_dashboard_{timestamp}.xlsx"
+    shutil.copy2(CONTROL_WORKBOOK_PATH, export_path)
+
+    workbook = load_workbook(export_path)
+    sheet = workbook["Data"]
+    headers = [cell.value for cell in sheet[1]]
+    year_column_lookup = {int(value): index + 1 for index, value in enumerate(headers) if isinstance(value, int)}
+
+    with get_connection() as connection:
+      rows = connection.execute(
+          """
+          SELECT source_row_number, year, value
+          FROM dashboard_data
+          WHERE source_row_number IS NOT NULL
+          ORDER BY source_row_number, year
+          """
+      ).fetchall()
+
+    for row in rows:
+        row_number = row["source_row_number"]
+        year = row["year"]
+        value = row["value"]
+        column_number = year_column_lookup.get(year)
+        if row_number and column_number:
+            sheet.cell(row=row_number, column=column_number).value = value
+
+    workbook.save(export_path)
+    return export_path
+
+
+def get_current_dashboard_value(indicator: str, series_code: str | None, year: int) -> float | None:
+    row = fetch_one(
+        """
+        SELECT value
+        FROM dashboard_data
+        WHERE indicator = ?
+          AND COALESCE(series_code, '') = COALESCE(?, '')
+          AND year = ?
+        ORDER BY CASE WHEN ref_area = 'RW' THEN 0 ELSE 1 END, id
+        LIMIT 1
+        """,
+        (indicator, series_code, year),
+    )
+    return float(row["value"]) if row and row["value"] is not None else None

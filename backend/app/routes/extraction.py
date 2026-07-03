@@ -1,0 +1,26 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException
+
+from ..database import fetch_one
+from ..schemas import ExtractionResponse
+from ..services import excel_extractor, pdf_extractor
+
+router = APIRouter(prefix="/extraction", tags=["extraction"])
+
+
+@router.post("/reports/{report_id}/run", response_model=ExtractionResponse)
+def run_extraction(report_id: str) -> ExtractionResponse:
+    report = fetch_one("SELECT * FROM reports WHERE report_id = ?", (report_id,))
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found.")
+
+    report_type = report["report_type"]
+    if report_type == "excel":
+        result = excel_extractor.extract_report(report_id)
+    elif report_type == "pdf":
+        result = pdf_extractor.extract_report(report_id)
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported report type.")
+
+    return ExtractionResponse(**result)

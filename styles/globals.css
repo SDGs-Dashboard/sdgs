@@ -1,0 +1,55 @@
+@import url('https://fonts.googleapis.com/css2?family=Merriweather+Sans:wght@500;700&family=Public+Sans:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --rw-blue: #00a1de;
+  --rw-green: #00a651;
+  --rw-yellow: #fad201;
+  --rw-navy: #00457c;
+  --rw-surface: #f5f8fb;
+  --rw-border: #d9e2ec;
+  --rw-text: #102434;
+  --rw-muted: #5c6b76;
+}
+
+html,
+body,
+#__next {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--rw-text);
+  background:
+    radial-gradient(circle at 100% -20%, rgba(0, 161, 222, 0.14), transparent 38%),
+    radial-gradient(circle at -15% 102%, rgba(0, 166, 81, 0.1), transparent 42%),
+    #ffffff;
+  font-family: 'Public Sans', 'Source Sans 3', sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+@layer components {
+  .panel {
+    @apply rounded-card border border-slate-200 bg-white shadow-soft;
+  }
+
+  .soft-badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold;
+  }
+
+  .section-title {
+    @apply font-heading text-2xl font-semibold text-slate-900;
+  }
+}

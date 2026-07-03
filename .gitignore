@@ -106,3 +106,14 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Dashboard frontend
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.env.local
+backups/*.xlsx
+data/~$*.xlsx
+uploads/reports/
+data/admin/

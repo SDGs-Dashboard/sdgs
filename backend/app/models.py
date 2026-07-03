@@ -1,0 +1,224 @@
+SCHEMA_SQL = """
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS indicators (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    indicator_code TEXT NOT NULL,
+    series TEXT,
+    series_code TEXT,
+    dashboard_description TEXT,
+    unit_code TEXT,
+    data_source TEXT,
+    latest_year INTEGER,
+    latest_value REAL,
+    geography TEXT,
+    disaggregation TEXT,
+    source_table_reference TEXT,
+    metadata_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(indicator_code, series_code)
+);
+
+CREATE TABLE IF NOT EXISTS source_mapping (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mapping_id TEXT NOT NULL UNIQUE,
+    indicator TEXT NOT NULL,
+    series TEXT,
+    series_code TEXT,
+    dashboard_description TEXT,
+    unit_code TEXT,
+    data_source TEXT,
+    latest_year INTEGER,
+    latest_value REAL,
+    report_family TEXT,
+    report_name TEXT,
+    report_year INTEGER,
+    file_type TEXT,
+    file_name_or_link TEXT,
+    sheet_or_page TEXT,
+    table_no TEXT,
+    table_title TEXT,
+    report_indicator_name TEXT,
+    row_label TEXT,
+    column_label TEXT,
+    geography TEXT,
+    disaggregation TEXT,
+    extraction_method TEXT,
+    confidence TEXT,
+    status TEXT,
+    reviewer TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_id TEXT NOT NULL UNIQUE,
+    report_name TEXT NOT NULL,
+    report_family TEXT,
+    report_type TEXT NOT NULL,
+    source_institution TEXT,
+    publication_year INTEGER,
+    file_path TEXT,
+    original_file_name TEXT,
+    upload_date TEXT NOT NULL,
+    status TEXT NOT NULL,
+    extraction_summary TEXT,
+    metadata_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS extracted_tables (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_id TEXT NOT NULL,
+    sheet_name TEXT,
+    page_number INTEGER,
+    table_number TEXT,
+    table_title TEXT,
+    header_row_index INTEGER,
+    preview_json TEXT,
+    text_snapshot TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(report_id) REFERENCES reports(report_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS dashboard_data (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    indicator TEXT NOT NULL,
+    series TEXT,
+    series_code TEXT,
+    unit_code TEXT,
+    data_source TEXT,
+    description TEXT,
+    ref_area TEXT,
+    province TEXT,
+    district TEXT,
+    urbanization TEXT,
+    education TEXT,
+    age TEXT,
+    sex TEXT,
+    year INTEGER NOT NULL,
+    value REAL,
+    table_name_and_number TEXT,
+    source_row_number INTEGER,
+    source_year_column TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS proposed_updates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    update_id TEXT NOT NULL UNIQUE,
+    mapping_id TEXT NOT NULL,
+    indicator TEXT NOT NULL,
+    series_code TEXT,
+    year INTEGER NOT NULL,
+    old_value REAL,
+    new_value REAL,
+    difference REAL,
+    unit_code TEXT,
+    source_report TEXT,
+    source_report_id TEXT,
+    table_or_sheet TEXT,
+    evidence_page TEXT,
+    extraction_date TEXT NOT NULL,
+    status TEXT NOT NULL,
+    reviewer_comment TEXT,
+    confidence_score REAL,
+    confidence_label TEXT,
+    extraction_method TEXT,
+    extraction_note TEXT,
+    source_evidence TEXT,
+    matched_cell TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(mapping_id) REFERENCES source_mapping(mapping_id) ON DELETE CASCADE,
+    FOREIGN KEY(source_report_id) REFERENCES reports(report_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS extraction_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_id TEXT NOT NULL,
+    mapping_id TEXT NOT NULL,
+    indicator TEXT NOT NULL,
+    series_code TEXT,
+    expected_report TEXT,
+    expected_table TEXT,
+    expected_row TEXT,
+    expected_column TEXT,
+    status TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    closest_matched_row TEXT,
+    closest_matched_column TEXT,
+    confidence_score REAL,
+    source_sheet_page TEXT,
+    extracted_value REAL,
+    matched_table TEXT,
+    matched_cell TEXT,
+    debug_message TEXT,
+    proposed_update_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(report_id) REFERENCES reports(report_id) ON DELETE CASCADE,
+    FOREIGN KEY(mapping_id) REFERENCES source_mapping(mapping_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS approved_updates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    proposed_update_id TEXT NOT NULL UNIQUE,
+    mapping_id TEXT NOT NULL,
+    indicator TEXT NOT NULL,
+    series_code TEXT,
+    year INTEGER NOT NULL,
+    old_value REAL,
+    new_value REAL,
+    unit_code TEXT,
+    source_report TEXT,
+    table_or_sheet TEXT,
+    evidence_page TEXT,
+    approved_by TEXT NOT NULL,
+    approved_at TEXT NOT NULL,
+    source_evidence TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sdg_data_version_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    proposed_update_id TEXT,
+    dashboard_data_id INTEGER,
+    indicator TEXT NOT NULL,
+    series_code TEXT,
+    year INTEGER NOT NULL,
+    old_value REAL,
+    new_value REAL,
+    changed_by TEXT NOT NULL,
+    approval_action TEXT NOT NULL,
+    source_report TEXT,
+    source_evidence TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(proposed_update_id) REFERENCES proposed_updates(update_id) ON DELETE SET NULL,
+    FOREIGN KEY(dashboard_data_id) REFERENCES dashboard_data(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    source_file TEXT,
+    source_evidence TEXT,
+    created_at TEXT NOT NULL,
+    details_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_mapping_indicator ON source_mapping(indicator, series_code);
+CREATE INDEX IF NOT EXISTS idx_dashboard_data_lookup ON dashboard_data(indicator, series_code, year);
+CREATE INDEX IF NOT EXISTS idx_proposed_updates_status ON proposed_updates(status);
+CREATE INDEX IF NOT EXISTS idx_extraction_results_report ON extraction_results(report_id, status);
+CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status);
+CREATE INDEX IF NOT EXISTS idx_version_history_lookup ON sdg_data_version_history(indicator, series_code, year, created_at);
+"""

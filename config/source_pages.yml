@@ -1,0 +1,39 @@
+default_headers:
+  User-Agent: "Rwanda-SDG-Data-Ingestion/1.0 (+https://statistics.gov.rw)"
+  Accept-Language: "en"
+
+request:
+  delay_seconds: 1.5
+  timeout_seconds: 30
+
+sources:
+  - id: nisr-publications
+    survey: general
+    theme: official_statistics
+    url: "https://www.statistics.gov.rw/publication"
+    allowed_domains:
+      - "statistics.gov.rw"
+  - id: nisr-data-portal
+    survey: general
+    theme: datasets
+    url: "https://www.statistics.gov.rw/data-portal"
+    allowed_domains:
+      - "statistics.gov.rw"
+  - id: nisr-eicv
+    survey: eicv
+    theme: household_living_conditions
+    url: "https://www.statistics.gov.rw/publication/eicv"
+    allowed_domains:
+      - "statistics.gov.rw"
+  - id: nisr-dhs
+    survey: dhs
+    theme: demographic_health
+    url: "https://www.statistics.gov.rw/publication/dhs"
+    allowed_domains:
+      - "statistics.gov.rw"
+  - id: nisr-lfs
+    survey: lfs
+    theme: labour_force
+    url: "https://www.statistics.gov.rw/publication/labour-force-survey"
+    allowed_domains:
+      - "statistics.gov.rw"
