@@ -2,6 +2,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 
 import { formatPercent, publicStatusLabel, statusClassName } from '../utils/format';
+import { withBasePath } from '../utils/site';
 import { GoalSummary } from '../utils/types';
 
 interface SdgGoalCardProps {
@@ -20,7 +21,7 @@ export function SdgGoalCard({ goal }: SdgGoalCardProps): JSX.Element {
       <div className="p-3">
         <div className="relative h-28 overflow-hidden rounded-lg border border-slate-200 bg-slate-50 sm:h-32">
           <Image
-            src={`/sdg-goals/en/${goal.goal}.png`}
+            src={withBasePath(`/sdg-goals/en/${goal.goal}.png`)}
             alt={`United Nations SDG Goal ${goal.goal}: ${goal.name}`}
             fill
             className="object-contain p-1"

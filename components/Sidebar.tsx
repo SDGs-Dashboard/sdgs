@@ -4,7 +4,7 @@ import { useRouter } from 'next/router';
 import { FiDatabase, FiDownload, FiFlag, FiGrid, FiHome, FiSettings, FiX } from 'react-icons/fi';
 import clsx from 'clsx';
 
-import { isStaticExport } from '../utils/site';
+import { isStaticExport, withBasePath } from '../utils/site';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -41,17 +41,25 @@ export function Sidebar({ isOpen, onClose }: SidebarProps): JSX.Element {
       >
         <div className="mb-8 flex items-start justify-between">
           <div>
-            <div className="mb-3 flex items-center gap-3">
-              <div className="rounded-lg border border-slate-200 bg-white p-1.5 shadow-soft">
-                <Image src="/brand/rwanda-flag.svg" alt="Flag of Rwanda" width={30} height={20} className="h-5 w-auto rounded-[2px]" />
-              </div>
-              <div className="rounded-full border border-slate-200 bg-white p-1.5 shadow-soft">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-soft">
                 <Image
-                  src="/brand/sdg-wheel.png"
+                  src={withBasePath('/brand/rwanda-flag.svg')}
+                  alt="Flag of Rwanda"
+                  width={54}
+                  height={36}
+                  className="h-8 w-auto rounded-[3px]"
+                  priority
+                />
+              </div>
+              <div className="rounded-full border border-slate-200 bg-white p-2 shadow-soft">
+                <Image
+                  src={withBasePath('/brand/sdg-wheel.png')}
                   alt="United Nations Sustainable Development Goals wheel"
-                  width={24}
-                  height={24}
-                  className="h-6 w-6"
+                  width={40}
+                  height={40}
+                  className="h-10 w-10"
+                  priority
                 />
               </div>
             </div>

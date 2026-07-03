@@ -2,6 +2,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 
 import { formatPercent, publicStatusLabel, statusClassName } from '../utils/format';
+import { withBasePath } from '../utils/site';
 import { GoalSummary } from '../utils/types';
 
 interface SdgOfficialOverviewCardProps {
@@ -19,7 +20,7 @@ export function SdgOfficialOverviewCard({ goal }: SdgOfficialOverviewCardProps):
     >
       <div className="relative aspect-square overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
         <Image
-          src={`/sdg-goals/en/${goal.goal}.png`}
+          src={withBasePath(`/sdg-goals/en/${goal.goal}.png`)}
           alt={`SDG ${goal.goal}: ${goal.name}`}
           fill
           className="object-contain p-1 transition-transform duration-200 group-hover:scale-[1.01]"

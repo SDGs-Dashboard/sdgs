@@ -1,5 +1,7 @@
 import Image from 'next/image';
 
+import { withBasePath } from '../utils/site';
+
 interface RwandaSdgSummaryCardProps {
   averageTargetProgress: number;
   projectedOnTrackRate: number;
@@ -17,19 +19,20 @@ export function RwandaSdgSummaryCard({
 }: RwandaSdgSummaryCardProps): JSX.Element {
   return (
     <div className="panel border border-slate-200 bg-gradient-to-br from-rwNavy to-rwBlue p-5 text-white">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         <Image
-          src="/brand/rwanda-flag.svg"
+          src={withBasePath('/brand/rwanda-flag.svg')}
           alt="Flag of Rwanda"
-          width={18}
-          height={12}
-          className="rounded-[2px] border border-white/30"
+          width={54}
+          height={36}
+          className="h-8 w-auto rounded-[3px] border border-white/30 shadow-sm"
         />
         <Image
-          src="/brand/sdg-wheel.png"
+          src={withBasePath('/brand/sdg-wheel.png')}
           alt="United Nations Sustainable Development Goals wheel"
-          width={14}
-          height={14}
+          width={36}
+          height={36}
+          className="h-9 w-9"
         />
         <p className="text-xs uppercase tracking-[0.22em] text-white/70">National SDG Progress Snapshot</p>
       </div>

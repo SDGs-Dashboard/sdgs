@@ -4,6 +4,8 @@ import Image from 'next/image';
 import { useRouter } from 'next/router';
 import { FiFilter, FiMenu, FiSearch } from 'react-icons/fi';
 
+import { withBasePath } from '../utils/site';
+
 interface SearchItem {
   code: string;
   slug: string;
@@ -87,17 +89,25 @@ export function Header({ title, onOpenSidebar, searchItems, years, goals }: Head
             <FiMenu />
           </button>
           <div>
-            <div className="mb-1 flex items-center gap-2">
-              <div className="rounded-md border border-slate-200 bg-white p-1">
-                <Image src="/brand/rwanda-flag.svg" alt="Flag of Rwanda" width={24} height={16} className="h-[14px] w-auto rounded-[2px]" />
-              </div>
-              <div className="rounded-full border border-slate-200 bg-white p-1">
+            <div className="mb-2 flex items-center gap-2.5">
+              <div className="rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm">
                 <Image
-                  src="/brand/sdg-wheel.png"
+                  src={withBasePath('/brand/rwanda-flag.svg')}
+                  alt="Flag of Rwanda"
+                  width={45}
+                  height={30}
+                  className="h-7 w-auto rounded-[3px]"
+                  priority
+                />
+              </div>
+              <div className="rounded-full border border-slate-200 bg-white p-1.5 shadow-sm">
+                <Image
+                  src={withBasePath('/brand/sdg-wheel.png')}
                   alt="United Nations Sustainable Development Goals wheel"
-                  width={18}
-                  height={18}
-                  className="h-[16px] w-[16px]"
+                  width={32}
+                  height={32}
+                  className="h-8 w-8"
+                  priority
                 />
               </div>
             </div>
