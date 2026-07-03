@@ -47,7 +47,7 @@ export default function IndicatorDetailPage({
   initialSourceRows
 }: IndicatorDetailPageProps): JSX.Element {
   const router = useRouter();
-  const [sourceRows, setSourceRows] = useState<IndicatorSourceRow[] | null>(initialSourceRows);
+  const [sourceRows, setSourceRows] = useState<IndicatorSourceRow[] | null>(isStaticExport ? initialSourceRows : null);
   const [sourceLoading, setSourceLoading] = useState(false);
   const [sourceError, setSourceError] = useState('');
 
@@ -304,11 +304,6 @@ export const getStaticProps: GetStaticProps<IndicatorDetailPageProps> = async ({
 
   const dataset = getDashboardDataset();
   const safeDetail = JSON.parse(JSON.stringify(detail)) as IndicatorDetail;
-  const { readAdminDb } = await import('../../lib/admin/db');
-  const normalizedCode = code.trim().toLowerCase();
-  const initialSourceRows = readAdminDb()
-    .source_log.filter((row) => row.indicator_code.trim().toLowerCase() === normalizedCode)
-    .sort((a, b) => b.approved_at.localeCompare(a.approved_at));
 
   return {
     props: {
@@ -321,7 +316,7 @@ export const getStaticProps: GetStaticProps<IndicatorDetailPageProps> = async ({
       years: dataset.filters.years,
       goals: dataset.filters.goals,
       detail: safeDetail,
-      initialSourceRows: JSON.parse(JSON.stringify(initialSourceRows)) as IndicatorSourceRow[]
+      initialSourceRows: []
     }
   };
 };
