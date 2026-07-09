@@ -1,6 +1,8 @@
 import Image from 'next/image';
+import Link from 'next/link';
 
 import { withBasePath } from '../utils/site';
+import type { ProgressStatus } from '../utils/types';
 
 interface RwandaSdgSummaryCardProps {
   averageTargetProgress: number;
@@ -10,6 +12,12 @@ interface RwandaSdgSummaryCardProps {
   needsAttention: number;
 }
 
+const progressLinks: Array<{ label: ProgressStatus; valueKey: 'onTrack' | 'moderate' | 'needsAttention' }> = [
+  { label: 'On track', valueKey: 'onTrack' },
+  { label: 'Moderate progress', valueKey: 'moderate' },
+  { label: 'Needs attention', valueKey: 'needsAttention' }
+];
+
 export function RwandaSdgSummaryCard({
   averageTargetProgress,
   projectedOnTrackRate,
@@ -17,6 +25,12 @@ export function RwandaSdgSummaryCard({
   moderate,
   needsAttention
 }: RwandaSdgSummaryCardProps): JSX.Element {
+  const values = {
+    onTrack,
+    moderate,
+    needsAttention
+  };
+
   return (
     <div className="panel border border-slate-200 bg-gradient-to-br from-rwNavy to-rwBlue p-5 text-white">
       <div className="flex items-center gap-3">
@@ -45,18 +59,20 @@ export function RwandaSdgSummaryCard({
       </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <div className="rounded-xl bg-white/10 p-3">
-          <p className="text-xs text-white/75">On track</p>
-          <p className="font-heading text-2xl font-semibold">{onTrack}</p>
-        </div>
-        <div className="rounded-xl bg-white/10 p-3">
-          <p className="text-xs text-white/75">Moderate progress</p>
-          <p className="font-heading text-2xl font-semibold">{moderate}</p>
-        </div>
-        <div className="rounded-xl bg-white/10 p-3">
-          <p className="text-xs text-white/75">Needs attention</p>
-          <p className="font-heading text-2xl font-semibold">{needsAttention}</p>
-        </div>
+        {progressLinks.map((item) => (
+          <Link
+            key={item.label}
+            href={{ pathname: '/indicators', query: { status: item.label } }}
+            className="group rounded-xl bg-white/10 p-3 transition hover:-translate-y-0.5 hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-white/80"
+            aria-label={`Explore ${item.label.toLowerCase()} indicators`}
+          >
+            <p className="text-xs text-white/75">{item.label}</p>
+            <p className="font-heading text-2xl font-semibold">{values[item.valueKey]}</p>
+            <p className="mt-1 text-[11px] font-medium text-white/70 opacity-0 transition group-hover:opacity-100 group-focus:opacity-100">
+              Explore indicators →
+            </p>
+          </Link>
+        ))}
       </div>
 
       <div className="mt-3 text-xs text-white/80">
