@@ -102,12 +102,6 @@ export interface GoalTargetPoint {
   needsAttentionCount: number;
 }
 
-export interface ProvinceCoveragePoint {
-  province: string;
-  indicatorCount: number;
-  latestAverageYear: number | null;
-}
-
 export interface DashboardDataset {
   generatedAt: string;
   lastUpdated: string | null;
@@ -136,10 +130,5 @@ export interface DashboardDataset {
   indicators: IndicatorSummary[];
   dataQuality: DataQualitySummary;
   targetByGoal: GoalTargetPoint[];
-  geojson: {
-    type: string;
-    features: Array<Record<string, unknown>>;
-  };
-  provinceCoverage: ProvinceCoveragePoint[];
   details: Record<string, IndicatorDetail>;
 }

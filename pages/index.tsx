@@ -5,7 +5,6 @@ import { FiCalendar, FiCheckCircle, FiFlag, FiTarget, FiTrendingDown } from 'rea
 import { DataAvailabilityChart } from '../components/charts/DataAvailabilityChart';
 import { KpiCard } from '../components/KpiCard';
 import { Layout } from '../components/Layout';
-import { RwandaMapSummary } from '../components/RwandaMapSummary';
 import { RwandaSdgSummaryCard } from '../components/RwandaSdgSummaryCard';
 import { SdgOfficialOverviewCard } from '../components/SdgOfficialOverviewCard';
 import { formatDateLabel } from '../utils/format';
@@ -21,7 +20,6 @@ interface HomePageProps {
   overallProgress: DashboardDataset['overallProgress'];
   targetByGoal: DashboardDataset['targetByGoal'];
   overviewGoals: DashboardDataset['goals'];
-  provinceCoverage: DashboardDataset['provinceCoverage'];
 }
 
 export default function HomePage(props: HomePageProps): JSX.Element {
@@ -33,8 +31,7 @@ export default function HomePage(props: HomePageProps): JSX.Element {
     lastUpdated,
     overallProgress,
     targetByGoal,
-    overviewGoals,
-    provinceCoverage
+    overviewGoals
   } = props;
 
   return (
@@ -91,10 +88,6 @@ export default function HomePage(props: HomePageProps): JSX.Element {
       <section className="mt-5">
         <DataAvailabilityChart data={targetByGoal} />
       </section>
-
-      <section className="mt-5">
-        <RwandaMapSummary coverage={provinceCoverage} />
-      </section>
     </Layout>
   );
 }
@@ -117,8 +110,7 @@ export const getStaticProps: GetStaticProps<HomePageProps> = async () => {
       lastUpdated: dataset.lastUpdated,
       overallProgress: dataset.overallProgress,
       targetByGoal: dataset.targetByGoal,
-      overviewGoals,
-      provinceCoverage: dataset.provinceCoverage
+      overviewGoals
     }
   };
 };

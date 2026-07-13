@@ -76,16 +76,7 @@ const resolvePublicExcelPath = (): string => {
 
 const EXCEL_PATH = resolvePublicExcelPath();
 const META_DIR = path.join(process.cwd(), 'meta');
-const GEOJSON_PATH = path.join(process.cwd(), 'geojsons', 'RwandaRegions.geojson');
 const PUBLIC_DATA_SOURCE_FILTER = (process.env.PUBLIC_DATA_SOURCE_FILTER || 'nisr').trim().toLowerCase();
-
-const PROVINCE_NAME_MAP: Record<string, string> = {
-  'eastern province': 'East Province',
-  'kigali city': 'Kigali City',
-  'northern province': 'Northern Province, Rwanda',
-  'southern province': 'Southern Province, Rwanda',
-  'western province': 'Western Province, Rwanda'
-};
 
 let cachedDataset: DashboardDataset | null = null;
 let cachedDatasetMtimeMs: number | null = null;
@@ -214,11 +205,6 @@ const getGoalTarget = (code: string): { goal: number; target: string } => {
     goal: Number(goalPart),
     target: `${goalPart}.${targetPart ?? ''}`.replace(/\.$/, '')
   };
-};
-
-const normalizeProvinceName = (value: string): string => {
-  const key = value.trim().toLowerCase();
-  return PROVINCE_NAME_MAP[key] ?? value.trim();
 };
 
 const getSpecificityScore = (row: ParsedRow): number => {
@@ -624,14 +610,13 @@ const parseMetadata = (): Record<string, IndicatorMetadata> => {
 const loadRows = (): {
   buckets: Record<string, IndicatorBucket>;
   years: number[];
-  provinceCoverageRows: Array<{ indicatorCode: string; province: string; latestYear: number | null }>;
 } => {
   const workbook = XLSX.readFile(EXCEL_PATH, { cellDates: false });
   const dataSheet = workbook.Sheets.Data || workbook.Sheets[workbook.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(dataSheet, { defval: null });
 
   if (!rows.length) {
-    return { buckets: {}, years: [], provinceCoverageRows: [] };
+    return { buckets: {}, years: [] };
   }
 
   const normalizedRows = rows.map((row) =>
@@ -644,7 +629,6 @@ const loadRows = (): {
     .sort((a, b) => a - b);
 
   const buckets: Record<string, IndicatorBucket> = {};
-  const provinceCoverageRows: Array<{ indicatorCode: string; province: string; latestYear: number | null }> = [];
 
   for (const row of normalizedRows) {
     const indicatorCode = safeString(row.Indicator);
@@ -692,7 +676,6 @@ const loadRows = (): {
       yearValues: []
     };
 
-    let latestYearForRow: number | null = null;
     for (const year of years) {
       const value = safeNumber(row[String(year)]);
       if (value === null) {
@@ -700,7 +683,6 @@ const loadRows = (): {
       }
       parsedRow.yearValues.push({ year, value });
       buckets[indicatorCode].yearsWithAnyData.add(year);
-      latestYearForRow = year;
     }
 
     if (parsedRow.sex) {
@@ -717,18 +699,10 @@ const loadRows = (): {
       }
     }
 
-    if (parsedRow.province) {
-      provinceCoverageRows.push({
-        indicatorCode,
-        province: normalizeProvinceName(parsedRow.province),
-        latestYear: latestYearForRow
-      });
-    }
-
     buckets[indicatorCode].rows.push(parsedRow);
   }
 
-  return { buckets, years, provinceCoverageRows };
+  return { buckets, years };
 };
 
 const getGoalStatus = (goalSummary: GoalSummary): ProgressStatus => {
@@ -780,7 +754,7 @@ const overallOnTrackWeighted = (indicators: IndicatorSummary[]): number => {
 
 const buildDataset = (): DashboardDataset => {
   const metadataByIndicator = parseMetadata();
-  const { buckets, years, provinceCoverageRows } = loadRows();
+  const { buckets, years } = loadRows();
 
   const indicators: IndicatorSummary[] = [];
   const details: Record<string, IndicatorDetail> = {};
@@ -948,48 +922,6 @@ const buildDataset = (): DashboardDataset => {
       : 0
   };
 
-  const geojsonRaw = fs.existsSync(GEOJSON_PATH)
-    ? JSON.parse(fs.readFileSync(GEOJSON_PATH, 'utf-8'))
-    : { type: 'FeatureCollection', features: [] };
-
-  const provinceMap: Record<
-    string,
-    {
-      indicators: Set<string>;
-      latestYears: number[];
-    }
-  > = {};
-
-  for (const row of provinceCoverageRows) {
-    if (!provinceMap[row.province]) {
-      provinceMap[row.province] = {
-        indicators: new Set<string>(),
-        latestYears: []
-      };
-    }
-    provinceMap[row.province].indicators.add(row.indicatorCode);
-    if (row.latestYear !== null) {
-      provinceMap[row.province].latestYears.push(row.latestYear);
-    }
-  }
-
-  const geoFeatures = Array.isArray(geojsonRaw.features) ? geojsonRaw.features : [];
-  const provinceCoverage = geoFeatures.map((feature: Record<string, unknown>) => {
-    const properties = (feature.properties as Record<string, unknown>) ?? {};
-    const provinceName = safeString(properties.name);
-    const stats = provinceMap[provinceName];
-    const latestAverageYear =
-      stats && stats.latestYears.length
-        ? Math.round(stats.latestYears.reduce((sum, year) => sum + year, 0) / stats.latestYears.length)
-        : null;
-
-    return {
-      province: provinceName,
-      indicatorCount: stats ? stats.indicators.size : 0,
-      latestAverageYear
-    };
-  });
-
   return {
     generatedAt: new Date().toISOString(),
     lastUpdated: getLastUpdated(metadataByIndicator),
@@ -1016,8 +948,6 @@ const buildDataset = (): DashboardDataset => {
       farFromTargetIndicators
     },
     targetByGoal,
-    geojson: geojsonRaw,
-    provinceCoverage,
     details
   };
 };
