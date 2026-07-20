@@ -1,27 +1,27 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
+
+import { nisrAutomationApi } from '../../lib/nisrAutomationApi';
 
 export default function AdminLoginPage(): JSX.Element {
   const router = useRouter();
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
+  const [apiBase, setApiBase] = useState(nisrAutomationApi.apiBase);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setApiBase(nisrAutomationApi.getStoredApiBase());
+  }, []);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch('/api/admin/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
-      });
-      const payload = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        throw new Error(payload.error || 'Login failed.');
-      }
+      nisrAutomationApi.setStoredApiBase(apiBase);
+      await nisrAutomationApi.login(username, password);
       const next = typeof router.query.next === 'string' && router.query.next ? router.query.next : '/admin/nisr-automation';
       await router.push(next);
     } catch (loginError) {
@@ -37,8 +37,23 @@ export default function AdminLoginPage(): JSX.Element {
         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-rwBlue">Admin Access</p>
         <h1 className="mt-2 text-3xl font-semibold text-rwNavy">Dashboard Admin Login</h1>
         <p className="mt-2 text-sm text-slate-600">Sign in to access the NISR automation workflow inside the dashboard admin area.</p>
+        <p className="mt-3 rounded-2xl bg-slate-50 p-3 text-xs text-slate-500">
+          Backend API: <span className="font-semibold text-slate-700">{apiBase}</span>
+        </p>
 
         <form className="mt-6 space-y-4" onSubmit={onSubmit}>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-slate-700">Backend API URL</span>
+            <input
+              className="w-full rounded-xl border border-slate-200 px-3 py-2"
+              value={apiBase}
+              onChange={(event) => setApiBase(event.target.value)}
+              placeholder="https://your-backend.example.com/api"
+            />
+            <span className="mt-1 block text-xs text-slate-500">
+              GitHub Pages needs an HTTPS FastAPI backend for upload, extraction, review, and approval.
+            </span>
+          </label>
           <label className="block text-sm">
             <span className="mb-1 block font-medium text-slate-700">Username</span>
             <input className="w-full rounded-xl border border-slate-200 px-3 py-2" value={username} onChange={(event) => setUsername(event.target.value)} />

@@ -130,7 +130,7 @@ npm run dev
 Open:
 
 - Public dashboard: `http://localhost:3000`
-- Admin automation: `http://localhost:3000/admin/nisr-automation`
+- Admin automation: `http://localhost:3000/admin` or `http://localhost:3000/admin/nisr-automation`
 
 Use `localhost:3000` instead of `127.0.0.1:3000` for local frontend access.
 
@@ -152,6 +152,8 @@ DATABASE_URL=postgresql://user:password@host:5432/database
 
 ```bash
 BACKEND_CORS_ORIGINS=https://sdgs-dashboard.github.io,http://localhost:3000,http://127.0.0.1:3000
+ADMIN_COOKIE_SECURE=true
+ADMIN_COOKIE_SAMESITE=none
 ```
 
 5. Build the frontend with the hosted backend URL:
@@ -161,6 +163,14 @@ NEXT_PUBLIC_NISR_AUTOMATION_API_BASE=https://your-backend.example.com/api
 ```
 
 Do not connect GitHub Pages directly to Postgres from browser JavaScript. That would expose database credentials. The browser should call FastAPI, and FastAPI should connect to Postgres securely.
+
+On GitHub Pages, open `/sdgs/admin/login`, enter the HTTPS backend API URL, sign in, then use the normal workflow:
+
+1. upload report
+2. run extraction
+3. review proposed updates
+4. approve or reject values
+5. export approved dashboard data
 
 ## Admin login
 
@@ -271,7 +281,7 @@ How it works:
 - pushes to `develop` trigger `.github/workflows/deploy-to-staging.yml`
 - pushes to `production` trigger `.github/workflows/deploy-to-production.yml`
 - the Pages build exports the public dashboard and static frontend pages
-- full admin automation still needs the FastAPI backend running locally or hosted separately
+- full admin automation pages are included, but upload/extract/review/approve still need the FastAPI backend running locally or hosted separately
 - GitHub Pages does not run SQLite, Postgres, Python, file uploads, or PDF extraction
 
 Before the first deployment, make sure the repository Pages source is set to **GitHub Actions** in GitHub settings.

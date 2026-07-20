@@ -3,7 +3,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const root = process.cwd();
-const tempRoot = path.join(root, '.pages-build-temp');
+const tempRoot = fs.mkdtempSync(path.join(root, '.pages-build-temp-'));
 const tempAppRoot = path.join(tempRoot, 'app');
 const tempOutRoot = path.join(tempAppRoot, 'out');
 const finalOutRoot = path.join(root, 'out');
@@ -23,11 +23,16 @@ const directoryCopies = ['components', 'data', 'lib', 'meta', 'pages', 'public',
 
 const shouldSkip = (relativePath) => {
   const normalized = relativePath.replaceAll('\\', '/');
+  const isSupportedStaticAdminPage =
+    normalized === 'pages/admin/index.tsx' ||
+    normalized === 'pages/admin/login.tsx' ||
+    normalized === 'pages/admin/nisr-automation' ||
+    normalized.startsWith('pages/admin/nisr-automation/');
   return (
     normalized === 'middleware.ts' ||
     normalized.startsWith('pages/api/') ||
     normalized === 'pages/api' ||
-    (normalized.startsWith('pages/admin/') && normalized !== 'pages/admin/index.tsx') ||
+    (normalized.startsWith('pages/admin/') && !isSupportedStaticAdminPage) ||
     normalized.startsWith('data/admin/') ||
     normalized === 'data/admin' ||
     normalized.startsWith('data/uploads/') ||
@@ -39,9 +44,16 @@ const ensureDirectory = (targetPath) => {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 };
 
-const removePath = (targetPath) => {
+const removePath = (targetPath, options = {}) => {
   if (fs.existsSync(targetPath)) {
-    fs.rmSync(targetPath, { recursive: true, force: true });
+    try {
+      fs.rmSync(targetPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+    } catch (error) {
+      if (options.required) {
+        throw error;
+      }
+      console.warn(`Warning: could not remove temporary path ${targetPath}: ${error.message}`);
+    }
   }
 };
 
@@ -69,8 +81,7 @@ const copyDirectory = (sourceDir, targetDir, baseDir) => {
 };
 
 const prepareTempApp = () => {
-  removePath(tempRoot);
-  removePath(finalOutRoot);
+  removePath(finalOutRoot, { required: true });
   fs.mkdirSync(tempAppRoot, { recursive: true });
 
   for (const relativeFile of fileCopies) {

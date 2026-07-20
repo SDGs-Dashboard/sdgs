@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { ReactNode } from 'react';
 import { useRouter } from 'next/router';
 
+import { nisrAutomationApi } from '../../lib/nisrAutomationApi';
+
 const NAV_ITEMS = [
   { href: '/admin/nisr-automation', label: 'Reports Library' },
   { href: '/admin/nisr-automation/extract', label: 'Extract Data' },
@@ -20,9 +22,7 @@ export function NisrAdminLayout({ title, description, children }: NisrAdminLayou
   const router = useRouter();
 
   const logout = async (): Promise<void> => {
-    await fetch('/api/admin/auth/logout', {
-      method: 'POST'
-    });
+    await nisrAutomationApi.logout().catch(() => null);
     await router.push('/admin/login');
   };
 

@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .auth import read_admin_session
 from .database import CONTROL_WORKBOOK_PATH, init_db, init_storage
-from .routes import admin_data, approvals, exports, extraction, extraction_results, proposed_updates, reports, upload
+from .routes import admin_data, approvals, auth as auth_routes, exports, extraction, extraction_results, proposed_updates, reports, upload
 from .schemas import ImportResponse
 from .services.workbook_importer import copy_control_workbook, import_control_workbook, workbook_exists
 
@@ -37,7 +37,7 @@ app.add_middleware(
 
 @app.middleware("http")
 async def require_admin_auth(request: Request, call_next):
-    if request.url.path in {"/api/health"}:
+    if request.url.path in {"/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/session"}:
         return await call_next(request)
 
     if request.url.path.startswith("/api/"):
@@ -46,6 +46,7 @@ async def require_admin_auth(request: Request, call_next):
     return await call_next(request)
 
 app.include_router(upload.router, prefix="/api")
+app.include_router(auth_routes.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
 app.include_router(extraction.router, prefix="/api")
 app.include_router(extraction_results.router, prefix="/api")

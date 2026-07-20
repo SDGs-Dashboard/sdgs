@@ -1,4 +1,5 @@
 import { ChangeEvent, FormEvent, useEffect, useState } from 'react';
+import Link from 'next/link';
 
 import { NisrAdminLayout } from '../../../components/admin/NisrAdminLayout';
 import { StatusBadge } from '../../../components/admin/StatusBadge';
@@ -104,18 +105,18 @@ export default function NisrReportsLibraryPage(): JSX.Element {
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
-              <a href="/admin/nisr-automation/extract" className="rounded-full bg-rwGreen px-4 py-2 text-sm font-semibold text-white">
+              <Link href="/admin/nisr-automation/extract" className="rounded-full bg-rwGreen px-4 py-2 text-sm font-semibold text-white">
                 Go to extraction
-              </a>
-              <a href="/admin/nisr-automation/review" className="rounded-full bg-rwBlue px-4 py-2 text-sm font-semibold text-white">
+              </Link>
+              <Link href="/admin/nisr-automation/review" className="rounded-full bg-rwBlue px-4 py-2 text-sm font-semibold text-white">
                 Review proposals
-              </a>
-              <a href="/admin/nisr-automation/results" className="rounded-full bg-slate-700 px-4 py-2 text-sm font-semibold text-white">
+              </Link>
+              <Link href="/admin/nisr-automation/results" className="rounded-full bg-slate-700 px-4 py-2 text-sm font-semibold text-white">
                 View extraction results
-              </a>
-              <a href="/admin/nisr-automation/approved" className="rounded-full bg-slate-700 px-4 py-2 text-sm font-semibold text-white">
+              </Link>
+              <Link href="/admin/nisr-automation/approved" className="rounded-full bg-slate-700 px-4 py-2 text-sm font-semibold text-white">
                 View approved data
-              </a>
+              </Link>
             </div>
           </div>
         </div>

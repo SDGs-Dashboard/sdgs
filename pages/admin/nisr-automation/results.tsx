@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 
 import { NisrAdminLayout } from '../../../components/admin/NisrAdminLayout';
@@ -123,9 +124,9 @@ export default function NisrExtractionResultsPage(): JSX.Element {
                 >
                   Export debug report
                 </a>
-                <a href={`/admin/nisr-automation/review?report_id=${encodeURIComponent(reportId)}`} className="rounded-full bg-rwGreen px-4 py-2 text-sm font-semibold text-white">
+                <Link href={`/admin/nisr-automation/review?report_id=${encodeURIComponent(reportId)}`} className="rounded-full bg-rwGreen px-4 py-2 text-sm font-semibold text-white">
                   Open proposed updates
-                </a>
+                </Link>
               </div>
             ) : null}
           </div>
