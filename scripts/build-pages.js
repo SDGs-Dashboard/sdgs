@@ -27,8 +27,7 @@ const shouldSkip = (relativePath) => {
     normalized === 'middleware.ts' ||
     normalized.startsWith('pages/api/') ||
     normalized === 'pages/api' ||
-    normalized.startsWith('pages/admin/') ||
-    normalized === 'pages/admin' ||
+    (normalized.startsWith('pages/admin/') && normalized !== 'pages/admin/index.tsx') ||
     normalized.startsWith('data/admin/') ||
     normalized === 'data/admin' ||
     normalized.startsWith('data/uploads/') ||

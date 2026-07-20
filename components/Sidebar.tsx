@@ -4,7 +4,7 @@ import { useRouter } from 'next/router';
 import { FiDownload, FiFlag, FiGrid, FiHome, FiSettings, FiX } from 'react-icons/fi';
 import clsx from 'clsx';
 
-import { isStaticExport, withBasePath } from '../utils/site';
+import { withBasePath } from '../utils/site';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -16,11 +16,7 @@ const navItems = [
   { href: '/goals', label: 'Goal Performance', icon: FiFlag },
   { href: '/indicators', label: 'Indicator Explorer', icon: FiGrid },
   { href: '/downloads', label: 'Downloads', icon: FiDownload },
-  {
-    href: isStaticExport ? 'http://localhost:3000/admin/nisr-automation' : '/admin/nisr-automation',
-    label: 'Admin Section',
-    icon: FiSettings
-  }
+  { href: '/admin', label: 'Admin Section', icon: FiSettings }
 ];
 
 export function Sidebar({ isOpen, onClose }: SidebarProps): JSX.Element {
@@ -92,8 +88,6 @@ export function Sidebar({ isOpen, onClose }: SidebarProps): JSX.Element {
               <Link
                 key={item.href}
                 href={item.href}
-                target={item.href.startsWith('http') ? '_blank' : undefined}
-                rel={item.href.startsWith('http') ? 'noreferrer' : undefined}
                 onClick={onClose}
                 className={clsx(
                   'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
