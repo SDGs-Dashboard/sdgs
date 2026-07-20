@@ -11,6 +11,7 @@ from ..database import execute, fetch_all, fetch_one
 from .audit import log_action
 from .extraction_results import clear_report_results, create_review_placeholder, next_proposed_update_id, record_result, summarize_report_results
 from .matcher import cleaned_match, confidence_label, exact_match, fuzzy_score, normalize_text
+from .report_family import family_scope_decision, mapping_family_from_record, report_family_from_record
 from .workbook_importer import get_current_dashboard_value
 from .excel_extractor import _best_label_match, _candidate_column_terms, _candidate_row_labels, _get_mapping_context
 
@@ -72,16 +73,15 @@ def _significant_tokens(value: str) -> set[str]:
 def _report_matches_mapping(report: dict[str, Any], mapping: dict[str, Any]) -> bool:
     report_type = normalize_text(report.get("report_type"))
     mapping_file_type = normalize_text(mapping.get("file_type"))
-    report_family = normalize_text(report.get("report_family"))
-    mapping_family = normalize_text(mapping.get("report_family"))
     mapping_report_name = normalize_text(mapping.get("report_name"))
     report_name = normalize_text(report.get("report_name"))
 
     if mapping_file_type and "pdf" not in mapping_file_type and "pdf+excel" not in mapping_file_type:
         return False
-    if mapping_family and report_family and mapping_family not in report_family and report_family not in mapping_family:
+    family_allowed, _, _ = family_scope_decision(report, mapping)
+    if not family_allowed:
         return False
-    if mapping_report_name and report_name and mapping_report_name not in report_name and report_name not in mapping_report_name:
+    if not report_family_from_record(report) and mapping_report_name and report_name and mapping_report_name not in report_name and report_name not in mapping_report_name:
         return False
     return report_type == "pdf"
 
@@ -106,7 +106,13 @@ def _mapping_reference_candidates(mapping: dict[str, Any], context: dict[str, An
 
 
 def _expected_report_text(mapping: dict[str, Any], report: dict[str, Any]) -> str:
-    return str(mapping.get("report_name") or mapping.get("report_family") or report.get("report_name") or "").strip()
+    return str(
+        mapping.get("report_name")
+        or mapping.get("report_family")
+        or mapping.get("data_source")
+        or report.get("report_name")
+        or ""
+    ).strip()
 
 
 def _expected_column_text(mapping: dict[str, Any], context: dict[str, Any], report: dict[str, Any]) -> str:
@@ -120,7 +126,7 @@ def _expected_column_text(mapping: dict[str, Any], context: dict[str, Any], repo
 
 
 def _validate_mapping(mapping: dict[str, Any], context: dict[str, Any], report: dict[str, Any]) -> tuple[str | None, str | None]:
-    if not str(mapping.get("report_name") or mapping.get("report_family") or "").strip():
+    if not str(mapping.get("report_name") or mapping.get("report_family") or mapping.get("data_source") or "").strip():
         return "missing report name", "missing_mapping"
     if not _mapping_reference_candidates(mapping, context):
         return "missing table number", "missing_mapping"
@@ -345,17 +351,36 @@ def extract_report(report_id: str) -> dict[str, Any]:
             expected_column = _expected_column_text(mapping, context, report)
 
             try:
+                family_allowed, family_reason, family_debug = family_scope_decision(report, mapping)
+                if not family_allowed:
+                    record_result(
+                        report_id=report_id,
+                        mapping=mapping,
+                        status="missing_mapping" if family_reason == "missing report data source" else "not_found",
+                        reason=family_reason or "report data source mismatch",
+                        expected_report=expected_report,
+                        expected_table=expected_table,
+                        expected_row=expected_row,
+                        expected_column=expected_column,
+                        debug_message=family_debug,
+                    )
+                    continue
+
                 if not _report_matches_mapping(report, mapping):
                     record_result(
                         report_id=report_id,
                         mapping=mapping,
-                        status="missing_mapping",
+                        status="not_found",
                         reason="report does not match uploaded file",
                         expected_report=expected_report,
                         expected_table=expected_table,
                         expected_row=expected_row,
                         expected_column=expected_column,
-                        debug_message="Mapping row belongs to a different report family, report name, or file type.",
+                        debug_message=(
+                            f"Uploaded family={report_family_from_record(report) or 'unknown'}; "
+                            f"mapping family={mapping_family_from_record(mapping) or 'unknown'}. "
+                            "Mapping row belongs to a different report name or file type."
+                        ),
                     )
                     continue
 

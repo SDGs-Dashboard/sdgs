@@ -197,6 +197,7 @@ The automation is approval-first. Nothing should affect final dashboard data unt
 ### Important automation behavior
 
 - Mapping workbook is the source of truth
+- Uploaded report family/data source is checked before value matching, so an EICV report only extracts from EICV mappings
 - Every mapping row is checked and logged
 - Low-confidence or ambiguous matches go to `Needs Review`
 - Blank values must be manually entered before approval

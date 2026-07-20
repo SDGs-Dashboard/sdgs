@@ -71,6 +71,34 @@ const cellToText = (value: CellValue | undefined): string => String(value ?? '')
 
 const cleanText = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/g, '');
 
+const FAMILY_PATTERNS: Record<string, RegExp[]> = {
+  EICV: [/\beicv\s*\d*\b/i, /integrated household living conditions/i],
+  DHS: [/\bdhs\b/i, /\brdhs\b/i, /demographic and health survey/i],
+  RPHC: [/\brphc\b/i, /\bcensus\b/i, /population and housing census/i]
+};
+
+const inferReportFamily = (...values: Array<string | number | null | undefined>): string => {
+  const text = values
+    .map((value) => String(value ?? ''))
+    .join(' ')
+    .toLowerCase();
+  for (const [family, patterns] of Object.entries(FAMILY_PATTERNS)) {
+    if (patterns.some((pattern) => pattern.test(text))) {
+      return family;
+    }
+  }
+  return '';
+};
+
+const mappingReportFamily = (mapping: StaticMappingRow): string =>
+  inferReportFamily(
+    mapping.reportFamily,
+    mapping.dataSource,
+    mapping.reportName,
+    mapping.tableTitle,
+    mapping.notes
+  );
+
 const toNumber = (value: string): number | null => {
   const cleaned = value.replace(/,/g, '').replace(/%/g, '').trim();
   if (!cleaned) {
@@ -197,7 +225,7 @@ const findNearestNumeric = (
   return { value: null, columnIndex: null };
 };
 
-const extractMappingRow = (mapping: StaticMappingRow, sheets: PreparedSheet[]): StaticExtractionResult => {
+const extractMappingRow = (mapping: StaticMappingRow, sheets: PreparedSheet[], uploadedFamily: string): StaticExtractionResult => {
   const rowTargets = [
     mapping.rowLabel,
     mapping.reportIndicatorName,
@@ -213,6 +241,53 @@ const extractMappingRow = (mapping: StaticMappingRow, sheets: PreparedSheet[]): 
   const expectedTable = [mapping.tableNo, mapping.tableTitle].filter(Boolean).join(' - ');
   const expectedRow = rowTargets[0] || '';
   const expectedColumn = columnTargets[0] || '';
+  const currentMappingFamily = mappingReportFamily(mapping);
+
+  if (uploadedFamily && !currentMappingFamily) {
+    return {
+      mappingId: mapping.mappingId,
+      indicator: mapping.indicator,
+      seriesCode: mapping.seriesCode,
+      series: mapping.series,
+      status: 'missing_mapping',
+      reason: `Uploaded report looks like ${uploadedFamily}, but this mapping row has no matching Report_Family or Data_Source.`,
+      expectedTable,
+      expectedRow,
+      expectedColumn,
+      oldValue: mapping.latestValue,
+      newValue: null,
+      difference: null,
+      unitCode: mapping.unitCode,
+      confidenceScore: 0,
+      sourceSheet: '',
+      matchedCell: '',
+      closestMatchedRow: '',
+      closestMatchedColumn: ''
+    };
+  }
+
+  if (uploadedFamily && currentMappingFamily !== uploadedFamily) {
+    return {
+      mappingId: mapping.mappingId,
+      indicator: mapping.indicator,
+      seriesCode: mapping.seriesCode,
+      series: mapping.series,
+      status: 'not_found',
+      reason: `Not checked before value matching: uploaded report is ${uploadedFamily}, mapping row is ${currentMappingFamily}.`,
+      expectedTable,
+      expectedRow,
+      expectedColumn,
+      oldValue: mapping.latestValue,
+      newValue: null,
+      difference: null,
+      unitCode: mapping.unitCode,
+      confidenceScore: 0,
+      sourceSheet: '',
+      matchedCell: '',
+      closestMatchedRow: '',
+      closestMatchedColumn: ''
+    };
+  }
 
   if (!rowTargets.length) {
     return {
@@ -340,8 +415,9 @@ const extractMappingRow = (mapping: StaticMappingRow, sheets: PreparedSheet[]): 
   };
 };
 
-const exportResults = (results: StaticExtractionResult[], reportName: string): void => {
+const exportResults = (results: StaticExtractionResult[], reportName: string, mappingRows: StaticMappingRow[]): void => {
   const extractionDate = new Date().toISOString();
+  const mappingRowsById = new Map(mappingRows.map((mapping) => [mapping.mappingId, mapping]));
   const proposedRows = results
     .filter((result) => result.status === 'extracted' || result.status === 'needs_review')
     .map((result, index) => ({
@@ -362,22 +438,27 @@ const exportResults = (results: StaticExtractionResult[], reportName: string): v
       Confidence_Score: result.confidenceScore
     }));
 
-  const debugRows = results.map((result) => ({
-    Indicator: result.indicator,
-    Series_Code: result.seriesCode,
-    Report_expected: reportName,
-    Table_expected: result.expectedTable,
-    Row_expected: result.expectedRow,
-    Column_year_expected: result.expectedColumn,
-    Status: result.status,
-    Reason: result.reason,
-    Closest_matched_row: result.closestMatchedRow,
-    Closest_matched_column: result.closestMatchedColumn,
-    Confidence_score: result.confidenceScore,
-    Source_sheet: result.sourceSheet,
-    Matched_cell: result.matchedCell,
-    Extracted_value: result.newValue
-  }));
+  const debugRows = results.map((result) => {
+    const mapping = mappingRowsById.get(result.mappingId);
+    return {
+      Indicator: result.indicator,
+      Series_Code: result.seriesCode,
+      Data_source_expected: mapping?.dataSource || '',
+      Mapping_family_expected: mapping ? mappingReportFamily(mapping) : '',
+      Report_expected: reportName,
+      Table_expected: result.expectedTable,
+      Row_expected: result.expectedRow,
+      Column_year_expected: result.expectedColumn,
+      Status: result.status,
+      Reason: result.reason,
+      Closest_matched_row: result.closestMatchedRow,
+      Closest_matched_column: result.closestMatchedColumn,
+      Confidence_score: result.confidenceScore,
+      Source_sheet: result.sourceSheet,
+      Matched_cell: result.matchedCell,
+      Extracted_value: result.newValue
+    };
+  });
 
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(proposedRows), 'Proposed_Updates');
@@ -406,6 +487,7 @@ export default function AdminStaticPage({
 }: AdminStaticPageProps): JSX.Element {
   const [selectedFileName, setSelectedFileName] = useState('');
   const [reportName, setReportName] = useState('');
+  const [detectedReportFamily, setDetectedReportFamily] = useState('');
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [results, setResults] = useState<StaticExtractionResult[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -426,6 +508,7 @@ export default function AdminStaticPage({
     setError(null);
     setResults([]);
     setSheetNames([]);
+    setDetectedReportFamily('');
 
     if (!file) {
       return;
@@ -437,14 +520,17 @@ export default function AdminStaticPage({
 
     setBusy(true);
     setSelectedFileName(file.name);
-    setReportName(file.name.replace(/\.[^.]+$/, ''));
+    const nextReportName = file.name.replace(/\.[^.]+$/, '');
+    const nextReportFamily = inferReportFamily(file.name, nextReportName);
+    setReportName(nextReportName);
+    setDetectedReportFamily(nextReportFamily || 'Unknown');
 
     try {
       const workbook = /\.csv$/i.test(file.name)
         ? XLSX.read(await file.text(), { type: 'string' })
         : XLSX.read(await file.arrayBuffer(), { type: 'array' });
       const sheets = prepareWorkbookSheets(workbook);
-      const extractedResults = mappingRows.map((mapping) => extractMappingRow(mapping, sheets));
+      const extractedResults = mappingRows.map((mapping) => extractMappingRow(mapping, sheets, nextReportFamily));
       setSheetNames(sheets.map((sheet) => sheet.name));
       setResults(extractedResults);
     } catch (readError) {
@@ -502,6 +588,14 @@ export default function AdminStaticPage({
           </label>
 
           {selectedFileName ? <p className="mt-3 text-xs text-slate-500">Selected: {selectedFileName}</p> : null}
+          {detectedReportFamily ? (
+            <p className="mt-2 text-xs text-slate-500">
+              Detected source family: <span className="font-semibold text-rwNavy">{detectedReportFamily}</span>
+              {detectedReportFamily !== 'Unknown'
+                ? '. This is checked before any value matching.'
+                : '. Family was not detected, so all mapped sources are checked.'}
+            </p>
+          ) : null}
           {sheetNames.length ? <p className="mt-2 text-xs text-slate-500">Sheets read: {sheetNames.join(', ')}</p> : null}
           {busy ? <p className="mt-3 text-sm text-rwBlue">Reading report and checking mapping rows...</p> : null}
           {error ? <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p> : null}
@@ -509,7 +603,7 @@ export default function AdminStaticPage({
           <button
             type="button"
             disabled={!results.length}
-            onClick={() => exportResults(results, reportName || selectedFileName || 'NISR report')}
+            onClick={() => exportResults(results, reportName || selectedFileName || 'NISR report', mappingRows)}
             className="mt-5 inline-flex items-center gap-2 rounded-full bg-rwGreen px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             <FiDownload className="h-4 w-4" />

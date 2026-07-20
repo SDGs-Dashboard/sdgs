@@ -9,6 +9,7 @@ from fastapi import APIRouter, File, Form, UploadFile
 from ..database import UPLOADS_DIR, execute, fetch_one
 from ..schemas import UploadResponse
 from ..services.audit import log_action
+from ..services.report_family import infer_report_family
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -43,6 +44,7 @@ async def upload_report(
     stored_path.write_bytes(content)
 
     report_id = f"REP-UP-{timestamp}"
+    detected_family = infer_report_family(report_family, report_name, file.filename)
     execute(
         """
         INSERT INTO reports (
@@ -54,7 +56,7 @@ async def upload_report(
         (
             report_id,
             report_name or Path(file.filename).stem,
-            report_family or None,
+            detected_family or report_family or None,
             detect_report_type(file.filename),
             source_institution or "NISR",
             publication_year,
