@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,12 +14,21 @@ from .services.workbook_importer import copy_control_workbook, import_control_wo
 
 app = FastAPI(title="NISR SDG Automation", version="0.1.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+
+def cors_origins() -> list[str]:
+    configured = os.getenv("BACKEND_CORS_ORIGINS", "").strip()
+    if configured:
+        return [origin.strip() for origin in configured.split(",") if origin.strip()]
+    return [
         "http://127.0.0.1:3000",
         "http://localhost:3000",
-    ],
+        "https://sdgs-dashboard.github.io",
+    ]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

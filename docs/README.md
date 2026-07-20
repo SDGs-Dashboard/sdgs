@@ -4,7 +4,7 @@ This project adds a local, metadata-driven SDG automation workflow built around 
 
 ## Structure
 
-- `backend/` FastAPI + SQLite automation API
+- `backend/` FastAPI automation API, using SQLite locally or Postgres when `DATABASE_URL` is set
 - `frontend/` React frontend for local staff workflows
 - `data/` SQLite database, workbook copy, uploads, processed files, exports
 
@@ -34,6 +34,20 @@ npm run dev
 ```
 
 The backend defaults to `http://127.0.0.1:8000`, and the frontend expects that base URL.
+
+## Database options
+
+The first local version uses SQLite at `data/nisr_sdg.db`.
+
+For an online admin system, deploy the FastAPI backend separately and set:
+
+```bash
+DATABASE_URL=postgresql://user:password@host:5432/database
+BACKEND_CORS_ORIGINS=https://sdgs-dashboard.github.io,http://localhost:3000
+NEXT_PUBLIC_NISR_AUTOMATION_API_BASE=https://your-backend.example.com/api
+```
+
+GitHub Pages cannot run SQLite or Postgres directly. It should only host the frontend and call the FastAPI backend.
 
 ## Key backend endpoints
 

@@ -26,6 +26,7 @@ This repository contains:
 - Frontend pages under `pages/`
 - Shared UI components under `components/`
 - Local automation data under `data/`
+- Optional hosted Postgres support for the admin automation backend
 
 ## Project structure
 
@@ -96,11 +97,16 @@ Important values in `.env.local`:
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
 - `ADMIN_AUTH_SECRET`
+- `DATABASE_URL` if using hosted Postgres instead of local SQLite
+- `BACKEND_CORS_ORIGINS` if the backend is hosted separately from the frontend
+- `NEXT_PUBLIC_NISR_AUTOMATION_API_BASE` if the frontend should call a hosted backend
 - `PUBLIC_SDG_DATA_PATH`
 
 ## Running locally
 
 You need **two terminals**.
+
+By default the backend uses local SQLite at `data/nisr_sdg.db`. Leave `DATABASE_URL` blank for local development.
 
 ### Terminal 1: start backend
 
@@ -127,6 +133,34 @@ Open:
 - Admin automation: `http://localhost:3000/admin/nisr-automation`
 
 Use `localhost:3000` instead of `127.0.0.1:3000` for local frontend access.
+
+## Online admin with Postgres
+
+GitHub Pages is static hosting. It can serve the dashboard UI, but it cannot run SQLite, Postgres, FastAPI, file uploads, or server-side extraction by itself.
+
+For the full online admin workflow:
+
+1. Host the FastAPI backend on a service such as Render, Railway, Fly.io, Azure, or another Python host.
+2. Create a managed Postgres database, for example Neon, Supabase, Railway Postgres, or Render Postgres.
+3. Set the backend environment variable:
+
+```bash
+DATABASE_URL=postgresql://user:password@host:5432/database
+```
+
+4. Allow the GitHub Pages frontend to call the backend:
+
+```bash
+BACKEND_CORS_ORIGINS=https://sdgs-dashboard.github.io,http://localhost:3000,http://127.0.0.1:3000
+```
+
+5. Build the frontend with the hosted backend URL:
+
+```bash
+NEXT_PUBLIC_NISR_AUTOMATION_API_BASE=https://your-backend.example.com/api
+```
+
+Do not connect GitHub Pages directly to Postgres from browser JavaScript. That would expose database credentials. The browser should call FastAPI, and FastAPI should connect to Postgres securely.
 
 ## Admin login
 
@@ -235,8 +269,9 @@ How it works:
 
 - pushes to `develop` trigger `.github/workflows/deploy-to-staging.yml`
 - pushes to `production` trigger `.github/workflows/deploy-to-production.yml`
-- the Pages build exports only the public dashboard
-- admin automation and FastAPI APIs stay local-only and are not deployed to GitHub Pages
+- the Pages build exports the public dashboard and static frontend pages
+- full admin automation still needs the FastAPI backend running locally or hosted separately
+- GitHub Pages does not run SQLite, Postgres, Python, file uploads, or PDF extraction
 
 Before the first deployment, make sure the repository Pages source is set to **GitHub Actions** in GitHub settings.
 

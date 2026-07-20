@@ -159,11 +159,23 @@ def import_control_workbook(workbook_path: str | Path | None = None, *, force: b
 
             cursor.execute(
                 """
-                INSERT OR REPLACE INTO indicators (
+                INSERT INTO indicators (
                     indicator_code, series, series_code, dashboard_description, unit_code,
                     data_source, latest_year, latest_value, geography, disaggregation,
                     source_table_reference, metadata_json, created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(indicator_code, series_code) DO UPDATE SET
+                    series = excluded.series,
+                    dashboard_description = excluded.dashboard_description,
+                    unit_code = excluded.unit_code,
+                    data_source = excluded.data_source,
+                    latest_year = excluded.latest_year,
+                    latest_value = excluded.latest_value,
+                    geography = excluded.geography,
+                    disaggregation = excluded.disaggregation,
+                    source_table_reference = excluded.source_table_reference,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at
                 """,
                 (
                     indicator,

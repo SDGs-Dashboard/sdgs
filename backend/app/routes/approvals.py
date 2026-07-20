@@ -119,11 +119,25 @@ def review_update(update_id: str, payload: ReviewActionRequest) -> MessageRespon
             approval_time = utc_now()
             connection.execute(
                 """
-                INSERT OR REPLACE INTO approved_updates (
+                INSERT INTO approved_updates (
                     proposed_update_id, mapping_id, indicator, series_code, year, old_value,
                     new_value, unit_code, source_report, table_or_sheet, evidence_page,
                     approved_by, approved_at, source_evidence
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(proposed_update_id) DO UPDATE SET
+                    mapping_id = excluded.mapping_id,
+                    indicator = excluded.indicator,
+                    series_code = excluded.series_code,
+                    year = excluded.year,
+                    old_value = excluded.old_value,
+                    new_value = excluded.new_value,
+                    unit_code = excluded.unit_code,
+                    source_report = excluded.source_report,
+                    table_or_sheet = excluded.table_or_sheet,
+                    evidence_page = excluded.evidence_page,
+                    approved_by = excluded.approved_by,
+                    approved_at = excluded.approved_at,
+                    source_evidence = excluded.source_evidence
                 """,
                 (
                     update_id,
