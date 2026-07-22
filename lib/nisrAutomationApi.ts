@@ -3,17 +3,43 @@ const API_BASE_STORAGE_KEY = 'nisrAutomationApiBase';
 
 const normalizeApiBase = (value: string): string => value.trim().replace(/\/+$/, '');
 
+const isLoopbackHost = (hostname: string): boolean => hostname === 'localhost' || hostname === '127.0.0.1';
+
+const alignLoopbackHost = (value: string): string => {
+  const normalizedValue = normalizeApiBase(value);
+  if (typeof window === 'undefined' || !normalizedValue) {
+    return normalizedValue;
+  }
+
+  try {
+    const url = new URL(normalizedValue);
+    if (isLoopbackHost(window.location.hostname) && isLoopbackHost(url.hostname)) {
+      url.hostname = window.location.hostname;
+      return normalizeApiBase(url.toString());
+    }
+  } catch {
+    return normalizedValue;
+  }
+
+  return normalizedValue;
+};
+
 const getApiBases = (): string[] => {
   const bases = new Set<string>();
 
   if (typeof window !== 'undefined') {
+    if (isLoopbackHost(window.location.hostname)) {
+      const protocol = window.location.protocol || 'http:';
+      bases.add(`${protocol}//${window.location.hostname}:8000/api`);
+    }
+
     const storedBase = window.localStorage.getItem(API_BASE_STORAGE_KEY)?.trim();
     if (storedBase) {
-      bases.add(normalizeApiBase(storedBase));
+      bases.add(alignLoopbackHost(storedBase));
     }
   }
 
-  bases.add(normalizeApiBase(DEFAULT_API_BASE));
+  bases.add(alignLoopbackHost(DEFAULT_API_BASE));
 
   if (typeof window !== 'undefined') {
     const protocol = window.location.protocol || 'http:';
@@ -255,11 +281,11 @@ export const nisrAutomationApi = {
     if (typeof window === 'undefined') {
       return DEFAULT_API_BASE;
     }
-    return window.localStorage.getItem(API_BASE_STORAGE_KEY) || DEFAULT_API_BASE;
+    return alignLoopbackHost(window.localStorage.getItem(API_BASE_STORAGE_KEY) || DEFAULT_API_BASE);
   },
   setStoredApiBase: (value: string): void => {
     if (typeof window !== 'undefined') {
-      window.localStorage.setItem(API_BASE_STORAGE_KEY, normalizeApiBase(value));
+      window.localStorage.setItem(API_BASE_STORAGE_KEY, alignLoopbackHost(value));
     }
   },
   login: (username: string, password: string): Promise<{ ok: boolean; username: string }> =>

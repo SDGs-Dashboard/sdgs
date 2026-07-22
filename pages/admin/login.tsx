@@ -22,6 +22,12 @@ export default function AdminLoginPage(): JSX.Element {
     try {
       nisrAutomationApi.setStoredApiBase(apiBase);
       await nisrAutomationApi.login(username, password);
+      const session = await nisrAutomationApi.getSession();
+      if (!session.authenticated) {
+        throw new Error(
+          'Login reached the backend, but the browser did not keep the session. Use matching local hosts: open the dashboard at http://localhost:3000 and set Backend API URL to http://localhost:8000/api.'
+        );
+      }
       const next = typeof router.query.next === 'string' && router.query.next ? router.query.next : '/admin/nisr-automation';
       await router.push(next);
     } catch (loginError) {
