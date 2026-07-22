@@ -172,6 +172,31 @@ On GitHub Pages, open `/sdgs/admin/login`, enter the HTTPS backend API URL, sign
 4. approve or reject values
 5. export approved dashboard data
 
+### Render backend blueprint
+
+This repository includes `render.yaml` and `backend/Dockerfile` for deploying the FastAPI backend with a managed Postgres database on Render.
+
+1. In Render, create a new Blueprint from `https://github.com/SDGs-Dashboard/sdgs.git`.
+2. Select the `develop` branch.
+3. Let Render create `nisr-sdg-automation-api` and `nisr-sdg-automation-db`.
+4. Set the prompted `ADMIN_PASSWORD` value.
+5. After deployment, copy the backend URL and add `/api`, for example:
+
+```bash
+https://nisr-sdg-automation-api.onrender.com/api
+```
+
+6. Open `https://sdgs-dashboard.github.io/sdgs/admin/login` and paste that URL into **Backend API URL**.
+
+If you use another host, deploy `backend/Dockerfile` or run:
+
+```bash
+cd backend
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Then set the same environment variables shown above.
+
 ## Admin login
 
 Admin authentication is required for automation pages.
