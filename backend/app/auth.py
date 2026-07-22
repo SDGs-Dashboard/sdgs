@@ -20,7 +20,7 @@ ADMIN_COOKIE_NAME = os.getenv("ADMIN_COOKIE_NAME", "admin_auth")
 ADMIN_SESSION_SECRET = os.getenv("ADMIN_SESSION_SECRET") or os.getenv("ADMIN_AUTH_SECRET", "local-dev-admin-secret")
 ADMIN_SESSION_DURATION_SECONDS = int(os.getenv("ADMIN_SESSION_DURATION_SECONDS", str(60 * 60 * 10)))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "NISR@10!")
 ADMIN_COOKIE_SECURE = os.getenv("ADMIN_COOKIE_SECURE", "false").lower() == "true"
 ADMIN_COOKIE_SAMESITE = os.getenv("ADMIN_COOKIE_SAMESITE", "none" if ADMIN_COOKIE_SECURE else "lax")
 
