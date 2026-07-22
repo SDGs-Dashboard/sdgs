@@ -11,6 +11,8 @@ const CLASS_MAP: Record<string, string> = {
   ready: 'bg-emerald-100 text-emerald-800',
   processed: 'bg-emerald-100 text-emerald-800',
   'pending review': 'bg-amber-100 text-amber-800',
+  'corrected and approved': 'bg-emerald-100 text-emerald-800',
+  'returned for review': 'bg-amber-100 text-amber-800',
   'not started': 'bg-slate-200 text-slate-700'
 };
 

@@ -1,3 +1,8 @@
+from _utf8 import patch_pandas_compatibility, prefer_utf8_file_io
+
+prefer_utf8_file_io()
+patch_pandas_compatibility()
+
 from sdg.open_sdg import open_sdg_build
 
 

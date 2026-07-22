@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { NisrAdminLayout } from '../../../components/admin/NisrAdminLayout';
 import { StatusBadge } from '../../../components/admin/StatusBadge';
@@ -33,7 +33,7 @@ export default function NisrReviewPage(): JSX.Element {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<EditableState | null>(null);
 
-  const loadData = async (nextReportId = reportId): Promise<void> => {
+  const loadData = useCallback(async (nextReportId = ''): Promise<void> => {
     setError(null);
     const [reportsPayload, updatesPayload] = await Promise.all([
       nisrAutomationApi.getReports(),
@@ -48,17 +48,17 @@ export default function NisrReviewPage(): JSX.Element {
     if (!nextReportId || !reportsPayload.some((report) => report.report_id === nextReportId)) {
       setReportId(reportsPayload[0].report_id);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void loadData().catch((loadError) => setError(loadError instanceof Error ? loadError.message : 'Failed to load review queue.'));
-  }, []);
+  }, [loadData]);
 
   useEffect(() => {
     if (reportId) {
       void loadData(reportId).catch((loadError) => setError(loadError instanceof Error ? loadError.message : 'Failed to refresh review queue.'));
     }
-  }, [reportId]);
+  }, [loadData, reportId]);
 
   const selectedReport = useMemo(() => reports.find((report) => report.report_id === reportId) || null, [reportId, reports]);
 
@@ -76,18 +76,18 @@ export default function NisrReviewPage(): JSX.Element {
       return updates;
     }
     if (statusFilter === 'approved') {
-      return updates.filter((row) => row.status === 'Approved');
+      return updates.filter((row) => row.status === 'Approved' || row.status === 'Corrected and Approved');
     }
     if (statusFilter === 'needs-review') {
       return updates.filter((row) => row.status === 'Needs Review');
     }
-    return updates.filter((row) => row.status !== 'Approved' && row.status !== 'Rejected');
+    return updates.filter((row) => row.status !== 'Approved' && row.status !== 'Corrected and Approved' && row.status !== 'Rejected');
   }, [statusFilter, updates]);
 
   const counts = useMemo(
     () => ({
       pending: updates.filter((row) => row.status === 'Pending Review' || row.status === 'Ready' || row.status === 'Needs Review').length,
-      approved: updates.filter((row) => row.status === 'Approved').length,
+      approved: updates.filter((row) => row.status === 'Approved' || row.status === 'Corrected and Approved').length,
       lowConfidence: updates.filter((row) => (row.confidence_score || 0) < 0.9).length
     }),
     [updates]
@@ -130,7 +130,11 @@ export default function NisrReviewPage(): JSX.Element {
     }
   };
 
-  const reviewUpdate = async (updateId: string, action: 'approve' | 'reject' | 'needs_review', comment?: string): Promise<void> => {
+  const reviewUpdate = async (
+    updateId: string,
+    action: 'approve' | 'correct_approve' | 'reject' | 'needs_review' | 'return_for_review',
+    comment?: string
+  ): Promise<void> => {
     setBusyUpdateId(updateId);
     setMessage(null);
     try {
@@ -144,6 +148,45 @@ export default function NisrReviewPage(): JSX.Element {
       setError(error instanceof Error ? error.message : 'Review action failed.');
     } finally {
       setBusyUpdateId(null);
+    }
+  };
+
+  const correctAndApprove = async (row: ProposedUpdate): Promise<void> => {
+    if (!editForm) {
+      return;
+    }
+    setBusyUpdateId(row.update_id);
+    setMessage(null);
+    try {
+      const payload: ProposedUpdateEditPayload = {
+        new_value: editForm.new_value.trim() === '' ? null : Number(editForm.new_value),
+        year: Number(editForm.year),
+        table_or_sheet: editForm.table_or_sheet || null,
+        evidence_page: editForm.evidence_page || null,
+        extraction_note: editForm.extraction_note || null,
+        reviewer_comment: editForm.reviewer_comment || null
+      };
+      await nisrAutomationApi.updateProposedUpdate(row.update_id, payload);
+      const reviewPayload = await nisrAutomationApi.reviewUpdate(row.update_id, 'correct_approve', 'admin', editForm.reviewer_comment || 'Corrected and approved by admin');
+      setMessage(reviewPayload.message);
+      await loadData(reportId);
+      cancelEdit();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Correct and approve failed.');
+    } finally {
+      setBusyUpdateId(null);
+    }
+  };
+
+  const validationWarnings = (row: ProposedUpdate): string[] => {
+    if (!row.validation_warnings) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(row.validation_warnings) as unknown;
+      return Array.isArray(parsed) ? parsed.map(String) : [row.validation_warnings];
+    } catch {
+      return [row.validation_warnings];
     }
   };
 
@@ -225,6 +268,7 @@ export default function NisrReviewPage(): JSX.Element {
                       : null;
                   const largeChange = changeRatio !== null && changeRatio >= 0.25;
                   const isEditing = editingId === row.update_id && editForm !== null;
+                  const rowWarnings = validationWarnings(row);
 
                   return (
                     <tr key={row.update_id} className="border-t border-slate-100 align-top text-slate-700">
@@ -265,6 +309,11 @@ export default function NisrReviewPage(): JSX.Element {
                           {(row.new_value === null || row.new_value === undefined) && !isEditing ? (
                             <span className="rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700">Empty value</span>
                           ) : null}
+                          {rowWarnings.map((warning) => (
+                            <span key={warning} className="rounded-full bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-800">
+                              {warning}
+                            </span>
+                          ))}
                         </div>
                       </td>
                       <td className="px-4 py-3">
@@ -336,6 +385,14 @@ export default function NisrReviewPage(): JSX.Element {
                               </button>
                               <button
                                 type="button"
+                                disabled={busyUpdateId === row.update_id || editForm.new_value.trim() === ''}
+                                onClick={() => void correctAndApprove(row)}
+                                className="rounded-full bg-rwGreen px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                              >
+                                Correct & Approve
+                              </button>
+                              <button
+                                type="button"
                                 disabled={busyUpdateId === row.update_id}
                                 onClick={cancelEdit}
                                 className="rounded-full bg-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-800 disabled:opacity-60"
@@ -364,10 +421,10 @@ export default function NisrReviewPage(): JSX.Element {
                               <button
                                 type="button"
                                 disabled={busyUpdateId === row.update_id}
-                                onClick={() => void reviewUpdate(row.update_id, 'needs_review', 'Held for manual review')}
+                                onClick={() => void reviewUpdate(row.update_id, 'return_for_review', 'Returned for NISR/manual review')}
                                 className="rounded-full bg-rwYellow px-3 py-1.5 text-xs font-semibold text-slate-900 disabled:opacity-60"
                               >
-                                Needs Review
+                                Return for Review
                               </button>
                               <button
                                 type="button"

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 
 import { NisrAdminLayout } from '../../../components/admin/NisrAdminLayout';
@@ -12,21 +12,20 @@ export default function NisrExtractPage(): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [lastRun, setLastRun] = useState<ExtractionRunResponse | null>(null);
 
-  const loadReports = async (): Promise<void> => {
+  const loadReports = useCallback(async (): Promise<void> => {
     const payload = await nisrAutomationApi.getReports();
     setReports(payload);
-    if (!payload.length) {
-      setReportId('');
-      return;
-    }
-    if (!reportId || !payload.some((report) => report.report_id === reportId)) {
-      setReportId(payload[0].report_id);
-    }
-  };
+    setReportId((currentReportId) => {
+      if (!payload.length) {
+        return '';
+      }
+      return currentReportId && payload.some((report) => report.report_id === currentReportId) ? currentReportId : payload[0].report_id;
+    });
+  }, []);
 
   useEffect(() => {
     void loadReports().catch((loadError) => setProgressMessage(loadError instanceof Error ? loadError.message : 'Failed to load reports.'));
-  }, []);
+  }, [loadReports]);
 
   const selectedReport = useMemo(() => reports.find((report) => report.report_id === reportId) || null, [reportId, reports]);
 

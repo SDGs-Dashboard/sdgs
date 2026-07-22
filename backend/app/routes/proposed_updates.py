@@ -6,6 +6,8 @@ from fastapi import APIRouter, HTTPException, Query
 
 from ..database import execute, fetch_all, fetch_one
 from ..schemas import ProposedUpdateEditRequest, ProposedUpdateRead
+from ..services.audit import log_action
+from ..services.automation_rules import json_list, validate_candidate
 
 router = APIRouter(prefix="/proposed-updates", tags=["proposed-updates"])
 
@@ -49,12 +51,23 @@ def update_proposed_update(update_id: str, payload: ProposedUpdateEditRequest) -
     next_comment = payload.reviewer_comment if "reviewer_comment" in provided_fields else existing["reviewer_comment"]
     old_value = existing["old_value"]
     difference = None if old_value is None or next_value is None else float(next_value) - float(old_value)
+    mapping = fetch_one("SELECT * FROM source_mapping WHERE mapping_id = ?", (existing["mapping_id"],))
+    validation_warnings = existing.get("validation_warnings")
+    if mapping:
+        validation_warnings = json_list(
+            validate_candidate(
+                mapping=mapping,
+                new_value=next_value,
+                old_value=old_value,
+                existing_unit=existing.get("unit_code"),
+            )
+        )
 
     execute(
         """
         UPDATE proposed_updates
         SET new_value = ?, year = ?, difference = ?, table_or_sheet = ?, evidence_page = ?,
-            extraction_note = ?, reviewer_comment = ?, updated_at = ?
+            extraction_note = ?, reviewer_comment = ?, validation_warnings = ?, updated_at = ?
         WHERE update_id = ?
         """,
         (
@@ -65,9 +78,27 @@ def update_proposed_update(update_id: str, payload: ProposedUpdateEditRequest) -
             next_page,
             next_note,
             next_comment,
+            validation_warnings,
             utc_now(),
             update_id,
         ),
+    )
+    log_action(
+        "admin",
+        "proposed_update_corrected",
+        "proposed_update",
+        update_id,
+        old_value=existing["new_value"],
+        new_value=next_value,
+        source_file=existing["source_report"],
+        source_evidence=existing["source_evidence"],
+        details={
+            "old_year": existing["year"],
+            "new_year": next_year,
+            "old_table_or_sheet": existing["table_or_sheet"],
+            "new_table_or_sheet": next_table,
+            "reviewer_comment": next_comment,
+        },
     )
 
     updated = fetch_one("SELECT * FROM proposed_updates WHERE update_id = ?", (update_id,))

@@ -10,6 +10,15 @@ from openpyxl import load_workbook
 
 from ..database import execute, fetch_all, fetch_one, get_connection
 from .audit import log_action
+from .automation_rules import (
+    dashboard_year,
+    json_list,
+    mapping_eligibility,
+    proposal_status_from_warnings,
+    source_period,
+    source_year,
+    validate_candidate,
+)
 from .extraction_results import clear_report_results, create_review_placeholder, next_proposed_update_id, record_result, summarize_report_results
 from .matcher import cleaned_match, confidence_label, exact_match, fuzzy_score, normalize_text, score_match
 from .report_family import family_scope_decision, mapping_family_from_record, report_family_from_record
@@ -123,7 +132,7 @@ def _expected_report_text(mapping: dict[str, Any], report: dict[str, Any]) -> st
 
 
 def _expected_column_text(mapping: dict[str, Any], context: dict[str, Any], report: dict[str, Any]) -> str:
-    target_year = mapping.get("report_year") or mapping.get("latest_year") or context.get("target_year") or report.get("publication_year")
+    target_year = dashboard_year(mapping, context.get("target_year") or report.get("publication_year"))
     column_label = str(mapping.get("column_label") or "").strip()
     if column_label and target_year not in (None, ""):
         return f"{column_label} / {target_year}"
@@ -286,7 +295,7 @@ def _report_matches_mapping(report: dict[str, Any], mapping: dict[str, Any]) -> 
 
 
 def _get_mapping_context(mapping: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
-    target_year = mapping.get("report_year") or mapping.get("latest_year") or report.get("publication_year")
+    target_year = dashboard_year(mapping, report.get("publication_year"))
     params = (mapping["indicator"], mapping.get("series_code"), int(target_year)) if target_year not in (None, "") else None
 
     dashboard_row = None
@@ -336,6 +345,114 @@ def _get_mapping_context(mapping: dict[str, Any], report: dict[str, Any]) -> dic
     return context
 
 
+def _proposal_duplicate_exists(mapping: dict[str, Any], year: int, report_id: str, update_id: str | None = None) -> bool:
+    row = fetch_one(
+        """
+        SELECT COUNT(*) AS total
+        FROM proposed_updates
+        WHERE mapping_id = ?
+          AND year = ?
+          AND source_report_id = ?
+          AND (? IS NULL OR update_id <> ?)
+        """,
+        (mapping["mapping_id"], year, report_id, update_id, update_id),
+    )
+    return bool(row and int(row["total"]) > 0)
+
+
+def _approved_duplicate_exists(mapping: dict[str, Any], year: int) -> bool:
+    row = fetch_one(
+        """
+        SELECT COUNT(*) AS total
+        FROM approved_updates
+        WHERE mapping_id = ?
+          AND COALESCE(dashboard_year, year) = ?
+        """,
+        (mapping["mapping_id"], year),
+    )
+    return bool(row and int(row["total"]) > 0)
+
+
+def _insert_proposed_update(
+    *,
+    report_id: str,
+    report: dict[str, Any],
+    mapping: dict[str, Any],
+    year: int,
+    old_value: float | None,
+    new_value: float,
+    difference: float | None,
+    table_or_sheet: str | None,
+    evidence_page: str | None,
+    confidence_score: float,
+    confidence_label_value: str | None,
+    extraction_method: str,
+    extraction_note: str | None,
+    source_evidence: str | None,
+    matched_cell: str | None,
+) -> tuple[str, str, list[str]]:
+    update_id = next_proposed_update_id(report_id)
+    existing_unit = None
+    dashboard_context = _get_mapping_context(mapping, report)
+    if dashboard_context:
+        existing_unit = dashboard_context.get("unit_code")
+    warnings = validate_candidate(
+        mapping=mapping,
+        new_value=new_value,
+        old_value=old_value,
+        existing_unit=existing_unit,
+        duplicate=_proposal_duplicate_exists(mapping, year, report_id, update_id),
+        approved_duplicate=_approved_duplicate_exists(mapping, year),
+    )
+    proposal_status = proposal_status_from_warnings(confidence_score, warnings)
+    execute(
+        """
+        INSERT INTO proposed_updates (
+            update_id, mapping_id, indicator, series_code, year, old_value, new_value,
+            difference, unit_code, source_report, source_report_id, table_or_sheet, evidence_page,
+            extraction_date, status, reviewer_comment, confidence_score, confidence_label,
+            extraction_method, extraction_note, source_evidence, matched_cell, source_period,
+            publication_year, dashboard_year, mapping_status, mapping_type, validation_warnings,
+            source_year, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            update_id,
+            mapping["mapping_id"],
+            mapping["indicator"],
+            mapping.get("series_code"),
+            year,
+            old_value,
+            new_value,
+            difference,
+            mapping.get("unit_code"),
+            report["report_name"],
+            report_id,
+            table_or_sheet,
+            evidence_page,
+            utc_now(),
+            proposal_status,
+            None,
+            confidence_score,
+            confidence_label_value,
+            extraction_method,
+            extraction_note,
+            source_evidence,
+            matched_cell,
+            source_period(mapping),
+            mapping.get("publication_year") or report.get("publication_year"),
+            year,
+            mapping.get("status"),
+            mapping.get("mapping_type"),
+            json_list(warnings),
+            source_year(mapping, report.get("publication_year")),
+            utc_now(),
+            utc_now(),
+        ),
+    )
+    return update_id, proposal_status, warnings
+
+
 def _insert_extracted_table(report_id: str, sheet: SheetSnapshot) -> None:
     preview_rows = sheet.rows[:8]
     execute(
@@ -368,7 +485,7 @@ def _direct_series_year_match(sheet: SheetSnapshot, mapping: dict[str, Any], rep
     indicator_col = normalized_header.get("indicator")
     target_series_code = str(mapping.get("series_code") or "").strip()
     target_indicator = str(mapping.get("indicator") or "").strip()
-    target_year = mapping.get("report_year") or mapping.get("latest_year") or report.get("publication_year")
+    target_year = dashboard_year(mapping, report.get("publication_year"))
 
     year_lookup = {int(value): idx for idx, value in enumerate(sheet.header) if isinstance(value, int)}
     if not year_lookup:
@@ -648,7 +765,7 @@ def _metadata_match(sheet: SheetSnapshot, mapping: dict[str, Any], report: dict[
     table_no = str(mapping.get("table_no") or "").strip()
     table_title = str(mapping.get("table_title") or "").strip()
     reference_candidates = _mapping_reference_candidates(mapping, context)
-    target_year = mapping.get("report_year") or mapping.get("latest_year") or report.get("publication_year")
+    target_year = dashboard_year(mapping, report.get("publication_year"))
     target_year = int(target_year) if target_year not in (None, "") else None
 
     sheet_match = str(mapping.get("sheet_or_page") or "").strip()
@@ -805,6 +922,42 @@ def extract_report(report_id: str) -> dict[str, Any]:
                         "Mapping row belongs to a different report name or file type."
                     ),
                 )
+                continue
+
+            eligibility = mapping_eligibility(mapping)
+            if not eligibility.eligible:
+                placeholder_id = create_review_placeholder(
+                    report_id=report_id,
+                    report=report,
+                    mapping=mapping,
+                    year=context.get("target_year") or dashboard_year(mapping, report.get("publication_year")),
+                    old_value=get_current_dashboard_value(
+                        mapping["indicator"],
+                        mapping.get("series_code"),
+                        int(context.get("target_year") or dashboard_year(mapping, report.get("publication_year")) or datetime.now().year),
+                    ),
+                    status="Needs Review",
+                    confidence_score=0.0,
+                    confidence_label="Needs Review",
+                    extraction_method="Mapping eligibility gate",
+                    extraction_note=f"{eligibility.reason} Required action: {mapping.get('required_nisr_review_action') or 'Manual NISR review required.'}",
+                    table_or_sheet=mapping.get("table_no") or mapping.get("table_title"),
+                    evidence_page=mapping.get("sheet_or_page"),
+                    source_evidence=mapping.get("file_name_or_link") or mapping.get("report_name"),
+                )
+                record_result(
+                    report_id=report_id,
+                    mapping=mapping,
+                    status=eligibility.status,
+                    reason=eligibility.reason,
+                    expected_report=expected_report,
+                    expected_table=expected_table,
+                    expected_row=expected_row,
+                    expected_column=expected_column,
+                    debug_message=mapping.get("required_nisr_review_action"),
+                    proposed_update_id=placeholder_id,
+                )
+                proposals += 1
                 continue
 
             validation_reason, validation_status = _validate_mapping(mapping, context, report)
@@ -996,47 +1149,29 @@ def extract_report(report_id: str) -> dict[str, Any]:
                         match_reason = "multiple possible matches found"
                     else:
                         match_reason = "cleaned text match"
-                proposal_status = "Needs Review" if result_status == "ambiguous_match" else ("Pending Review" if confidence < 0.9 else "Ready")
-                year = int(context.get("target_year") or report.get("publication_year") or datetime.now().year)
+                year = int(context.get("target_year") or dashboard_year(mapping, report.get("publication_year")) or datetime.now().year)
                 old_value = get_current_dashboard_value(mapping["indicator"], mapping.get("series_code"), year)
                 difference = None if old_value is None else extracted_value - old_value
-                update_id = next_proposed_update_id(report_id)
-                execute(
-                    """
-                    INSERT INTO proposed_updates (
-                        update_id, mapping_id, indicator, series_code, year, old_value, new_value,
-                        difference, unit_code, source_report, source_report_id, table_or_sheet, evidence_page,
-                        extraction_date, status, reviewer_comment, confidence_score, confidence_label,
-                        extraction_method, extraction_note, source_evidence, matched_cell, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        update_id,
-                        mapping["mapping_id"],
-                        mapping["indicator"],
-                        mapping.get("series_code"),
-                        year,
-                        old_value,
-                        extracted_value,
-                        difference,
-                        mapping.get("unit_code"),
-                        report["report_name"],
-                        report_id,
-                        best_sheet.name,
-                        best_sheet.name,
-                        utc_now(),
-                        proposal_status,
-                        None,
-                        confidence,
-                        confidence_label(confidence),
-                        "Excel nearby cell search",
-                        match_reason,
-                        f"{best_sheet.name}!{matched_cell}",
-                        matched_cell,
-                        utc_now(),
-                        utc_now(),
-                    ),
+                update_id, proposal_status, warnings = _insert_proposed_update(
+                    report_id=report_id,
+                    report=report,
+                    mapping=mapping,
+                    year=year,
+                    old_value=old_value,
+                    new_value=extracted_value,
+                    difference=difference,
+                    table_or_sheet=best_sheet.name,
+                    evidence_page=best_sheet.name,
+                    confidence_score=confidence,
+                    confidence_label_value=confidence_label(confidence),
+                    extraction_method="Excel nearby cell search",
+                    extraction_note=match_reason,
+                    source_evidence=f"{best_sheet.name}!{matched_cell}",
+                    matched_cell=matched_cell,
                 )
+                if proposal_status == "Needs Review":
+                    result_status = "ambiguous_match"
+                    match_reason = "; ".join(warnings) or match_reason
                 proposals += 1
                 record_result(
                     report_id=report_id,
@@ -1058,55 +1193,36 @@ def extract_report(report_id: str) -> dict[str, Any]:
                 )
                 continue
 
-            year = int(candidate["year"])
+            year = int(dashboard_year(mapping, candidate["year"]) or candidate["year"])
             old_value = get_current_dashboard_value(mapping["indicator"], mapping.get("series_code"), year)
             new_value = float(candidate["new_value"])
             difference = None if old_value is None else new_value - old_value
-            update_id = next_proposed_update_id(report_id)
             result_status = "extracted"
             reason = "extracted"
-            proposal_status = "Pending Review" if candidate["confidence_score"] < 0.9 else "Ready"
             if candidate["confidence_score"] < 0.8 or "Fuzzy" in str(candidate["extraction_method"]):
                 result_status = "ambiguous_match"
                 reason = "multiple possible matches found" if candidate["confidence_score"] >= 0.6 else "value empty"
-                proposal_status = "Needs Review"
 
-            execute(
-                """
-                INSERT INTO proposed_updates (
-                    update_id, mapping_id, indicator, series_code, year, old_value, new_value,
-                    difference, unit_code, source_report, source_report_id, table_or_sheet, evidence_page,
-                    extraction_date, status, reviewer_comment, confidence_score, confidence_label,
-                    extraction_method, extraction_note, source_evidence, matched_cell, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    update_id,
-                    mapping["mapping_id"],
-                    mapping["indicator"],
-                    mapping.get("series_code"),
-                    year,
-                    old_value,
-                    new_value,
-                    difference,
-                    mapping.get("unit_code"),
-                    report["report_name"],
-                    report_id,
-                    candidate["table_or_sheet"],
-                    candidate["evidence_page"],
-                    utc_now(),
-                    proposal_status,
-                    None,
-                    candidate["confidence_score"],
-                    candidate["confidence_label"],
-                    candidate["extraction_method"],
-                    candidate["extraction_note"],
-                    candidate["source_evidence"],
-                    candidate["matched_cell"],
-                    utc_now(),
-                    utc_now(),
-                ),
+            update_id, proposal_status, warnings = _insert_proposed_update(
+                report_id=report_id,
+                report=report,
+                mapping=mapping,
+                year=year,
+                old_value=old_value,
+                new_value=new_value,
+                difference=difference,
+                table_or_sheet=candidate["table_or_sheet"],
+                evidence_page=candidate["evidence_page"],
+                confidence_score=candidate["confidence_score"],
+                confidence_label_value=candidate["confidence_label"],
+                extraction_method=candidate["extraction_method"],
+                extraction_note=candidate["extraction_note"],
+                source_evidence=candidate["source_evidence"],
+                matched_cell=candidate["matched_cell"],
             )
+            if proposal_status == "Needs Review":
+                result_status = "ambiguous_match"
+                reason = "; ".join(warnings) or reason
             proposals += 1
             record_result(
                 report_id=report_id,

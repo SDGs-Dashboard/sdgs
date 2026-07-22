@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException
 from ..database import execute, fetch_one, get_connection
 from ..schemas import MessageResponse, ReviewActionRequest
 from ..services.audit import log_action
+from ..services.automation_rules import json_list, parse_json_list, validate_candidate
+from ..services.workbook_importer import find_dashboard_observation
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
 
@@ -15,21 +17,9 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _apply_dashboard_update(connection, update: dict) -> tuple[int, float | None]:
+def _apply_dashboard_update(connection, update: dict, mapping: dict) -> tuple[int, float | None]:
     previous_value = None
-    existing = connection.execute(
-        """
-        SELECT id
-             , value
-        FROM dashboard_data
-        WHERE indicator = ?
-          AND COALESCE(series_code, '') = COALESCE(?, '')
-          AND year = ?
-        ORDER BY CASE WHEN ref_area = 'RW' THEN 0 ELSE 1 END, id
-        LIMIT 1
-        """,
-        (update["indicator"], update["series_code"], update["year"]),
-    ).fetchone()
+    existing = find_dashboard_observation(mapping, int(update["year"]))
 
     if existing:
         previous_value = existing["value"]
@@ -98,15 +88,46 @@ def _find_duplicate_approval(connection, update: dict) -> dict | None:
     return dict(row) if row else None
 
 
+def _approved_observation_exists(update: dict) -> bool:
+    row = fetch_one(
+        """
+        SELECT COUNT(*) AS total
+        FROM approved_updates
+        WHERE mapping_id = ?
+          AND COALESCE(dashboard_year, year) = ?
+          AND proposed_update_id <> ?
+        """,
+        (update["mapping_id"], update.get("dashboard_year") or update["year"], update["update_id"]),
+    )
+    return bool(row and int(row["total"]) > 0)
+
+
 @router.post("/{update_id}", response_model=MessageResponse)
 def review_update(update_id: str, payload: ReviewActionRequest) -> MessageResponse:
     update = fetch_one("SELECT * FROM proposed_updates WHERE update_id = ?", (update_id,))
     if not update:
         raise HTTPException(status_code=404, detail="Proposed update not found.")
+    mapping = fetch_one("SELECT * FROM source_mapping WHERE mapping_id = ?", (update["mapping_id"],))
+    if not mapping:
+        raise HTTPException(status_code=404, detail="Source mapping not found.")
 
-    if payload.action == "approve":
+    if payload.action in {"approve", "correct_approve"}:
         if update["new_value"] is None:
             raise HTTPException(status_code=400, detail="Cannot approve an empty extracted value.")
+        warnings = parse_json_list(update.get("validation_warnings"))
+        warnings.extend(
+            validate_candidate(
+                mapping=mapping,
+                new_value=update["new_value"],
+                old_value=update["old_value"],
+                existing_unit=update.get("unit_code"),
+                duplicate=False,
+                approved_duplicate=_approved_observation_exists(update),
+            )
+        )
+        warnings = sorted(set(warnings))
+        if any("Attempted overwrite" in warning for warning in warnings):
+            raise HTTPException(status_code=409, detail="This approval would overwrite already approved data. Reject or return it for review.")
         with get_connection() as connection:
             duplicate = _find_duplicate_approval(connection, update)
             if duplicate and duplicate["proposed_update_id"] != update_id:
@@ -115,15 +136,16 @@ def review_update(update_id: str, payload: ReviewActionRequest) -> MessageRespon
                     detail=f"Duplicate approval already exists for {update['indicator']} {update['year']} from this source.",
                 )
 
-            dashboard_data_id, previous_value = _apply_dashboard_update(connection, update)
+            dashboard_data_id, previous_value = _apply_dashboard_update(connection, update, mapping)
             approval_time = utc_now()
             connection.execute(
                 """
                 INSERT INTO approved_updates (
                     proposed_update_id, mapping_id, indicator, series_code, year, old_value,
                     new_value, unit_code, source_report, table_or_sheet, evidence_page,
-                    approved_by, approved_at, source_evidence
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    approved_by, approved_at, source_evidence, source_period, publication_year,
+                    dashboard_year, mapping_status, mapping_type, validation_warnings, approval_action
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(proposed_update_id) DO UPDATE SET
                     mapping_id = excluded.mapping_id,
                     indicator = excluded.indicator,
@@ -137,7 +159,14 @@ def review_update(update_id: str, payload: ReviewActionRequest) -> MessageRespon
                     evidence_page = excluded.evidence_page,
                     approved_by = excluded.approved_by,
                     approved_at = excluded.approved_at,
-                    source_evidence = excluded.source_evidence
+                    source_evidence = excluded.source_evidence,
+                    source_period = excluded.source_period,
+                    publication_year = excluded.publication_year,
+                    dashboard_year = excluded.dashboard_year,
+                    mapping_status = excluded.mapping_status,
+                    mapping_type = excluded.mapping_type,
+                    validation_warnings = excluded.validation_warnings,
+                    approval_action = excluded.approval_action
                 """,
                 (
                     update_id,
@@ -154,6 +183,13 @@ def review_update(update_id: str, payload: ReviewActionRequest) -> MessageRespon
                     payload.reviewer,
                     approval_time,
                     update["source_evidence"],
+                    update.get("source_period"),
+                    update.get("publication_year"),
+                    update.get("dashboard_year") or update["year"],
+                    update.get("mapping_status"),
+                    update.get("mapping_type"),
+                    json_list(warnings),
+                    payload.action,
                 ),
             )
             connection.execute(
@@ -172,7 +208,7 @@ def review_update(update_id: str, payload: ReviewActionRequest) -> MessageRespon
                     previous_value if previous_value is not None else update["old_value"],
                     update["new_value"],
                     payload.reviewer,
-                    "approve",
+                    payload.action,
                     update["source_report"],
                     update["source_evidence"],
                     payload.comment,
@@ -185,10 +221,10 @@ def review_update(update_id: str, payload: ReviewActionRequest) -> MessageRespon
             )
             connection.execute(
                 "UPDATE extraction_results SET status = ?, reason = ?, updated_at = ? WHERE proposed_update_id = ?",
-                ("extracted", "approved", approval_time, update_id),
+                ("extracted", payload.action, approval_time, update_id),
             )
             connection.commit()
-        status = "Approved"
+        status = "Approved" if payload.action == "approve" else "Corrected and Approved"
     elif payload.action == "reject":
         status = "Rejected"
         execute(
@@ -199,7 +235,7 @@ def review_update(update_id: str, payload: ReviewActionRequest) -> MessageRespon
         status = "Needs Review"
         execute(
             "UPDATE extraction_results SET status = ?, reason = ?, updated_at = ? WHERE proposed_update_id = ?",
-            ("ambiguous_match", "needs reviewer attention", utc_now(), update_id),
+            ("ambiguous_match", "returned for review" if payload.action == "return_for_review" else "needs reviewer attention", utc_now(), update_id),
         )
 
     if payload.action != "approve":

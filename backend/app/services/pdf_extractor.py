@@ -9,6 +9,15 @@ import pdfplumber
 
 from ..database import execute, fetch_all, fetch_one
 from .audit import log_action
+from .automation_rules import (
+    dashboard_year,
+    json_list,
+    mapping_eligibility,
+    proposal_status_from_warnings,
+    source_period,
+    source_year,
+    validate_candidate,
+)
 from .extraction_results import clear_report_results, create_review_placeholder, next_proposed_update_id, record_result, summarize_report_results
 from .matcher import cleaned_match, confidence_label, exact_match, fuzzy_score, normalize_text
 from .report_family import family_scope_decision, mapping_family_from_record, report_family_from_record
@@ -116,7 +125,7 @@ def _expected_report_text(mapping: dict[str, Any], report: dict[str, Any]) -> st
 
 
 def _expected_column_text(mapping: dict[str, Any], context: dict[str, Any], report: dict[str, Any]) -> str:
-    target_year = mapping.get("report_year") or mapping.get("latest_year") or context.get("target_year") or report.get("publication_year")
+    target_year = dashboard_year(mapping, context.get("target_year") or report.get("publication_year"))
     column_label = str(mapping.get("column_label") or "").strip()
     if column_label and target_year not in (None, ""):
         return f"{column_label} / {target_year}"
@@ -224,7 +233,7 @@ def _table_candidate(
     page_index: int,
     page_match: dict[str, Any],
 ) -> dict[str, Any]:
-    target_year = mapping.get("report_year") or mapping.get("latest_year") or report.get("publication_year")
+    target_year = dashboard_year(mapping, report.get("publication_year"))
     target_year = int(target_year) if target_year not in (None, "") else None
     cells = _iter_table_cells(table)
     row_match = _best_label_match(cells, _candidate_row_labels(mapping, context))
@@ -384,6 +393,42 @@ def extract_report(report_id: str) -> dict[str, Any]:
                     )
                     continue
 
+                eligibility = mapping_eligibility(mapping)
+                if not eligibility.eligible:
+                    placeholder_id = create_review_placeholder(
+                        report_id=report_id,
+                        report=report,
+                        mapping=mapping,
+                        year=context.get("target_year") or dashboard_year(mapping, report.get("publication_year")),
+                        old_value=get_current_dashboard_value(
+                            mapping["indicator"],
+                            mapping.get("series_code"),
+                            int(context.get("target_year") or dashboard_year(mapping, report.get("publication_year")) or datetime.now().year),
+                        ),
+                        status="Needs Review",
+                        confidence_score=0.0,
+                        confidence_label="Needs Review",
+                        extraction_method="Mapping eligibility gate",
+                        extraction_note=f"{eligibility.reason} Required action: {mapping.get('required_nisr_review_action') or 'Manual NISR review required.'}",
+                        table_or_sheet=mapping.get("table_no") or mapping.get("table_title"),
+                        evidence_page=mapping.get("sheet_or_page"),
+                        source_evidence=mapping.get("file_name_or_link") or mapping.get("report_name"),
+                    )
+                    record_result(
+                        report_id=report_id,
+                        mapping=mapping,
+                        status=eligibility.status,
+                        reason=eligibility.reason,
+                        expected_report=expected_report,
+                        expected_table=expected_table,
+                        expected_row=expected_row,
+                        expected_column=expected_column,
+                        debug_message=mapping.get("required_nisr_review_action"),
+                        proposed_update_id=placeholder_id,
+                    )
+                    proposals += 1
+                    continue
+
                 validation_reason, validation_status = _validate_mapping(mapping, context, report)
                 if validation_reason:
                     record_result(
@@ -423,11 +468,11 @@ def extract_report(report_id: str) -> dict[str, Any]:
                         report_id=report_id,
                         report=report,
                         mapping=mapping,
-                        year=context.get("target_year") or report.get("publication_year"),
+                        year=context.get("target_year") or dashboard_year(mapping, report.get("publication_year")),
                         old_value=get_current_dashboard_value(
                             mapping["indicator"],
                             mapping.get("series_code"),
-                            int(context.get("target_year") or report.get("publication_year") or datetime.now().year),
+                            int(context.get("target_year") or dashboard_year(mapping, report.get("publication_year")) or datetime.now().year),
                         ),
                         status="Needs Review",
                         confidence_score=page_matches[0]["score"],
@@ -491,11 +536,11 @@ def extract_report(report_id: str) -> dict[str, Any]:
                             report_id=report_id,
                             report=report,
                             mapping=mapping,
-                            year=context.get("target_year") or report.get("publication_year"),
+                            year=context.get("target_year") or dashboard_year(mapping, report.get("publication_year")),
                             old_value=get_current_dashboard_value(
                                 mapping["indicator"],
                                 mapping.get("series_code"),
-                                int(context.get("target_year") or report.get("publication_year") or datetime.now().year),
+                                int(context.get("target_year") or dashboard_year(mapping, report.get("publication_year")) or datetime.now().year),
                             ),
                             status="Needs Review",
                             confidence_score=failure.get("confidence_score"),
@@ -537,20 +582,57 @@ def extract_report(report_id: str) -> dict[str, Any]:
                         result_reason = "multiple possible matches found"
                         best_candidate["extraction_note"] = f"{best_candidate['extraction_note']}; multiple table candidates on the page"
 
-                year = int(best_candidate["year"])
+                year = int(dashboard_year(mapping, best_candidate["year"]) or best_candidate["year"])
                 old_value = get_current_dashboard_value(mapping["indicator"], mapping.get("series_code"), year)
                 new_value = float(best_candidate["new_value"])
                 difference = None if old_value is None else new_value - old_value
-                proposal_status = "Needs Review" if result_status == "ambiguous_match" or best_candidate["confidence_score"] < 0.9 else "Pending Review"
                 update_id = next_proposed_update_id(report_id)
+                duplicate = bool(
+                    fetch_one(
+                        """
+                        SELECT COUNT(*) AS total
+                        FROM proposed_updates
+                        WHERE mapping_id = ?
+                          AND year = ?
+                          AND source_report_id = ?
+                        """,
+                        (mapping["mapping_id"], year, report_id),
+                    )["total"]
+                )
+                approved_duplicate = bool(
+                    fetch_one(
+                        """
+                        SELECT COUNT(*) AS total
+                        FROM approved_updates
+                        WHERE mapping_id = ?
+                          AND COALESCE(dashboard_year, year) = ?
+                        """,
+                        (mapping["mapping_id"], year),
+                    )["total"]
+                )
+                dashboard_context = _get_mapping_context(mapping, report)
+                warnings = validate_candidate(
+                    mapping=mapping,
+                    new_value=new_value,
+                    old_value=old_value,
+                    existing_unit=dashboard_context.get("unit_code"),
+                    duplicate=duplicate,
+                    approved_duplicate=approved_duplicate,
+                )
+                proposal_status = proposal_status_from_warnings(best_candidate["confidence_score"], warnings)
+                if proposal_status == "Needs Review":
+                    result_status = "ambiguous_match"
+                    result_reason = "; ".join(warnings) or result_reason
                 execute(
                     """
                     INSERT INTO proposed_updates (
                         update_id, mapping_id, indicator, series_code, year, old_value, new_value,
                         difference, unit_code, source_report, source_report_id, table_or_sheet, evidence_page,
                         extraction_date, status, reviewer_comment, confidence_score, confidence_label,
-                        extraction_method, extraction_note, source_evidence, matched_cell, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        extraction_method, extraction_note, source_evidence, matched_cell, source_period,
+                        publication_year, dashboard_year, mapping_status, mapping_type, validation_warnings,
+                        source_year, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         update_id,
@@ -575,6 +657,13 @@ def extract_report(report_id: str) -> dict[str, Any]:
                         best_candidate["extraction_note"],
                         best_candidate["source_evidence"],
                         best_candidate["matched_cell"],
+                        source_period(mapping),
+                        mapping.get("publication_year") or report.get("publication_year"),
+                        year,
+                        mapping.get("status"),
+                        mapping.get("mapping_type"),
+                        json_list(warnings),
+                        source_year(mapping, report.get("publication_year")),
                         utc_now(),
                         utc_now(),
                     ),

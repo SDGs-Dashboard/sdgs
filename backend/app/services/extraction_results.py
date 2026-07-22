@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..database import execute, fetch_all, fetch_one
+from .automation_rules import dashboard_year, json_list, source_period, source_year, validate_candidate
 
 
 VALID_RESULT_STATUSES = {"extracted", "not_found", "missing_mapping", "ambiguous_match", "error"}
@@ -127,21 +128,29 @@ def create_review_placeholder(
     matched_cell: str | None = None,
 ) -> str:
     update_id = next_proposed_update_id(report_id)
+    target_dashboard_year = dashboard_year(mapping, int(year or report.get("publication_year") or datetime.now().year))
+    warnings = validate_candidate(
+        mapping=mapping,
+        new_value=None,
+        old_value=old_value,
+    )
     execute(
         """
         INSERT INTO proposed_updates (
             update_id, mapping_id, indicator, series_code, year, old_value, new_value,
             difference, unit_code, source_report, source_report_id, table_or_sheet, evidence_page,
             extraction_date, status, reviewer_comment, confidence_score, confidence_label,
-            extraction_method, extraction_note, source_evidence, matched_cell, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            extraction_method, extraction_note, source_evidence, matched_cell, source_period,
+            publication_year, dashboard_year, mapping_status, mapping_type, validation_warnings,
+            source_year, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             update_id,
             mapping["mapping_id"],
             mapping["indicator"],
             mapping.get("series_code"),
-            int(year or report.get("publication_year") or datetime.now().year),
+            int(target_dashboard_year or year or report.get("publication_year") or datetime.now().year),
             old_value,
             None,
             None,
@@ -159,6 +168,13 @@ def create_review_placeholder(
             extraction_note,
             source_evidence,
             matched_cell,
+            source_period(mapping),
+            mapping.get("publication_year") or report.get("publication_year"),
+            target_dashboard_year,
+            mapping.get("status"),
+            mapping.get("mapping_type"),
+            json_list(warnings),
+            source_year(mapping, report.get("publication_year")),
             utc_now(),
             utc_now(),
         ),

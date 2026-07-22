@@ -71,6 +71,13 @@ class ProposedUpdateRead(BaseModel):
     extraction_note: str | None = None
     source_evidence: str | None = None
     matched_cell: str | None = None
+    source_period: str | None = None
+    publication_year: int | None = None
+    dashboard_year: int | None = None
+    mapping_status: str | None = None
+    mapping_type: str | None = None
+    validation_warnings: str | None = None
+    source_year: int | None = None
 
 
 class ProposedUpdateEditRequest(BaseModel):
@@ -85,7 +92,7 @@ class ProposedUpdateEditRequest(BaseModel):
 class ReviewActionRequest(BaseModel):
     reviewer: str = Field(default="staff")
     comment: str | None = None
-    action: Literal["approve", "reject", "needs_review"]
+    action: Literal["approve", "correct_approve", "reject", "needs_review", "return_for_review"]
 
 
 class DashboardSummary(BaseModel):
@@ -163,6 +170,13 @@ class AuditLogEntry(BaseModel):
     new_value: str | None = None
     source_file: str | None = None
     source_evidence: str | None = None
+    source_period: str | None = None
+    publication_year: int | None = None
+    dashboard_year: int | None = None
+    mapping_status: str | None = None
+    mapping_type: str | None = None
+    validation_warnings: str | None = None
+    approval_action: str | None = None
     created_at: str
     details_json: str | None = None
 

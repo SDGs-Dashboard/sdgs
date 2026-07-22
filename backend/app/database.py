@@ -22,6 +22,45 @@ load_dotenv(BASE_DIR / "backend" / ".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
+SCHEMA_ADDITIONS: dict[str, dict[str, str]] = {
+    "source_mapping": {
+        "mapping_type": "TEXT",
+        "source_or_survey_period": "TEXT",
+        "publication_year": "INTEGER",
+        "dashboard_display_year": "INTEGER",
+        "calculation_or_transformation_rule": "TEXT",
+        "required_nisr_review_action": "TEXT",
+    },
+    "dashboard_data": {
+        "composite": "TEXT",
+        "urbanization_code": "TEXT",
+        "education_code": "TEXT",
+        "occupation": "TEXT",
+        "occupation_code": "TEXT",
+        "age_code": "TEXT",
+        "sex_code": "TEXT",
+        "seats": "TEXT",
+    },
+    "proposed_updates": {
+        "source_period": "TEXT",
+        "publication_year": "INTEGER",
+        "dashboard_year": "INTEGER",
+        "mapping_status": "TEXT",
+        "mapping_type": "TEXT",
+        "validation_warnings": "TEXT",
+        "source_year": "INTEGER",
+    },
+    "approved_updates": {
+        "source_period": "TEXT",
+        "publication_year": "INTEGER",
+        "dashboard_year": "INTEGER",
+        "mapping_status": "TEXT",
+        "mapping_type": "TEXT",
+        "validation_warnings": "TEXT",
+        "approval_action": "TEXT",
+    },
+}
+
 try:
     import psycopg
     from psycopg.rows import dict_row
@@ -148,6 +187,33 @@ def init_db() -> None:
                 connection.execute(statement)
         else:
             connection.executescript(SCHEMA_SQL)  # type: ignore[union-attr]
+        apply_schema_migrations(connection)
+
+
+def _table_columns(connection: sqlite3.Connection | PostgresConnection, table_name: str) -> set[str]:
+    if is_postgres():
+        rows = connection.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = ?
+            """,
+            (table_name,),
+        ).fetchall()
+        return {str(row["column_name"]) for row in rows}
+
+    rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()  # type: ignore[union-attr]
+    return {str(row["name"]) for row in rows}
+
+
+def apply_schema_migrations(connection: sqlite3.Connection | PostgresConnection) -> None:
+    for table_name, columns in SCHEMA_ADDITIONS.items():
+        existing_columns = _table_columns(connection, table_name)
+        for column_name, column_type in columns.items():
+            if column_name in existing_columns:
+                continue
+            connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+    connection.commit()
 
 
 def row_to_dict(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any] | None:
