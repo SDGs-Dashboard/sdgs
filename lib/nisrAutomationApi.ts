@@ -26,6 +26,19 @@ const getApiBases = (): string[] => {
   return Array.from(bases);
 };
 
+const getPrimaryApiBase = (): string => getApiBases()[0] || normalizeApiBase(DEFAULT_API_BASE);
+
+const backendUnavailableMessage = (): string => {
+  const triedBases = getApiBases().join(', ');
+  return [
+    'NISR automation backend is not reachable.',
+    'GitHub Pages is static, so upload, extraction, review, approval, and exports need the FastAPI backend running separately.',
+    'For local testing, start the backend with `cd backend && uvicorn app.main:app --reload`, then use `http://127.0.0.1:8000/api` as the Backend API URL on the admin login page.',
+    'For live testing, deploy the FastAPI backend on an HTTPS host and enter that `/api` URL on the admin login page.',
+    `Tried: ${triedBases}.`
+  ].join(' ');
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let lastNetworkError: Error | null = null;
 
@@ -59,7 +72,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
   }
 
-  throw new Error(lastNetworkError?.message || 'Failed to reach the NISR automation backend. Check that the backend server is running on port 8000.');
+  throw new Error(lastNetworkError ? backendUnavailableMessage() : 'Failed to reach the NISR automation backend.');
 }
 
 export interface AutomationSummary {
@@ -314,7 +327,7 @@ export const nisrAutomationApi = {
   getAuditLog: (): Promise<AuditLogEntry[]> => request('/audit-log'),
   getVersionHistory: (): Promise<VersionHistoryEntry[]> => request('/version-history'),
   exportUrl: (kind: 'dashboard' | 'proposed-updates' | 'approved-updates' | 'audit-log' | 'extraction-debug-report', reportId?: string): string => {
-    const base = `${DEFAULT_API_BASE}/exports/${kind}`;
+    const base = `${getPrimaryApiBase()}/exports/${kind}`;
     if (kind === 'extraction-debug-report' && reportId) {
       return `${base}?report_id=${encodeURIComponent(reportId)}`;
     }
