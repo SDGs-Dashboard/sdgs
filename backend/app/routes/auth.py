@@ -24,7 +24,7 @@ def login(payload: LoginRequest, response: Response) -> dict[str, Any]:
 
     token = create_admin_session_token(username)
     set_admin_session_cookie(response, token)
-    return {"ok": True, "username": username}
+    return {"ok": True, "username": username, "token": token}
 
 
 @router.post("/logout")

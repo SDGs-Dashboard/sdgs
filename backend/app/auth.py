@@ -74,21 +74,32 @@ def clear_admin_session_cookie(response: Response) -> None:
     )
 
 
-def read_admin_session(request: Request) -> dict[str, Any] | None:
-    token = request.cookies.get(ADMIN_COOKIE_NAME)
+def _read_bearer_token(request: Request) -> str | None:
+    authorization = request.headers.get("authorization", "").strip()
+    if not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization[7:].strip()
+    return token or None
+
+
+def read_admin_session_token(token: str | None) -> dict[str, Any] | None:
     if not token or "." not in token:
-      return None
+        return None
 
     encoded_payload, signature = token.split(".", 1)
     expected_signature = _sign(encoded_payload)
     if not hmac.compare_digest(expected_signature, signature):
-      return None
+        return None
 
     try:
-      payload = json.loads(_base64url_decode(encoded_payload))
+        payload = json.loads(_base64url_decode(encoded_payload))
     except Exception:
-      return None
+        return None
 
     if not payload.get("u") or not payload.get("exp") or int(payload["exp"]) < int(time.time() * 1000):
-      return None
+        return None
     return payload
+
+
+def read_admin_session(request: Request) -> dict[str, Any] | None:
+    return read_admin_session_token(request.cookies.get(ADMIN_COOKIE_NAME)) or read_admin_session_token(_read_bearer_token(request))

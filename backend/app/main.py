@@ -36,7 +36,18 @@ app.add_middleware(
 
 
 @app.middleware("http")
+async def allow_private_network_access(request: Request, call_next):
+    response = await call_next(request)
+    if request.headers.get("access-control-request-private-network", "").lower() == "true":
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
+
+
+@app.middleware("http")
 async def require_admin_auth(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
     if request.url.path in {"/api/health", "/api/auth/login", "/api/auth/logout", "/api/auth/session"}:
         return await call_next(request)
 

@@ -1,5 +1,6 @@
 const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_NISR_AUTOMATION_API_BASE?.trim() || 'http://127.0.0.1:8000/api';
 const API_BASE_STORAGE_KEY = 'nisrAutomationApiBase';
+const API_TOKEN_STORAGE_KEY = 'nisrAutomationSessionToken';
 
 const normalizeApiBase = (value: string): string => value.trim().replace(/\/+$/, '');
 
@@ -54,6 +55,24 @@ const getApiBases = (): string[] => {
 
 const getPrimaryApiBase = (): string => getApiBases()[0] || normalizeApiBase(DEFAULT_API_BASE);
 
+const getStoredToken = (): string | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  return window.localStorage.getItem(API_TOKEN_STORAGE_KEY);
+};
+
+const setStoredToken = (token: string | null): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (token) {
+    window.localStorage.setItem(API_TOKEN_STORAGE_KEY, token);
+  } else {
+    window.localStorage.removeItem(API_TOKEN_STORAGE_KEY);
+  }
+};
+
 const backendUnavailableMessage = (): string => {
   const triedBases = getApiBases().join(', ');
   return [
@@ -70,9 +89,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   for (const base of getApiBases()) {
     try {
+      const token = getStoredToken();
+      const headers = new Headers(init?.headers || {});
+      if (token && !headers.has('Authorization')) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
       const response = await fetch(`${base}${path}`, {
         credentials: 'include',
-        ...init
+        ...init,
+        headers
       });
       if (!response.ok) {
         const text = await response.text();
@@ -275,6 +300,12 @@ export interface AdminSessionResponse {
   expires_at?: number;
 }
 
+export interface AdminLoginResponse {
+  ok: boolean;
+  username: string;
+  token?: string;
+}
+
 export const nisrAutomationApi = {
   apiBase: DEFAULT_API_BASE,
   getStoredApiBase: (): string => {
@@ -288,16 +319,22 @@ export const nisrAutomationApi = {
       window.localStorage.setItem(API_BASE_STORAGE_KEY, alignLoopbackHost(value));
     }
   },
-  login: (username: string, password: string): Promise<{ ok: boolean; username: string }> =>
-    request('/auth/login', {
+  login: async (username: string, password: string): Promise<AdminLoginResponse> => {
+    const response = await request<AdminLoginResponse>('/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password })
-    }),
-  logout: (): Promise<{ ok: boolean }> =>
-    request('/auth/logout', {
+    });
+    setStoredToken(response.token || null);
+    return response;
+  },
+  logout: async (): Promise<{ ok: boolean }> => {
+    const response = await request<{ ok: boolean }>('/auth/logout', {
       method: 'POST'
-    }),
+    });
+    setStoredToken(null);
+    return response;
+  },
   getSession: (): Promise<AdminSessionResponse> => request('/auth/session'),
   getSummary: (): Promise<AutomationSummary> => request('/reports/dashboard/summary'),
   getReports: (): Promise<AutomationReport[]> => request('/reports'),
