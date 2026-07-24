@@ -23,6 +23,14 @@ services:
         fromDatabase:
           name: nisr-sdg-automation-db
           property: connectionString
+      - key: AI_PROVIDER
+        value: auto
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: openai/gpt-oss-20b:free
+      - key: OPENROUTER_MODEL_FALLBACKS
+        value: openrouter/free,openai/gpt-oss-120b:free,deepseek/deepseek-v4-flash:free
 
 databases:
   - name: nisr-sdg-automation-db

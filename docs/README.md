@@ -49,6 +49,22 @@ NEXT_PUBLIC_NISR_AUTOMATION_API_BASE=https://your-backend.example.com/api
 
 GitHub Pages cannot run SQLite or Postgres directly. It should only host the frontend and call the FastAPI backend.
 
+## OpenRouter accuracy assist
+
+OpenRouter can be enabled on the FastAPI backend to help resolve ambiguous sheets, pages, and nearby table values.
+It does not approve or save data automatically: every value still goes through `proposed_updates` and staff approval.
+
+Set these backend environment variables:
+
+```bash
+AI_PROVIDER=openrouter
+OPENROUTER_API_KEY=your-openrouter-key
+OPENROUTER_MODEL=your-preferred-structured-output-model
+OPENROUTER_MODEL_FALLBACKS=optional-model-1,optional-model-2
+```
+
+The deterministic extractor remains the source of truth. OpenRouter only chooses from candidates already found in the uploaded report, and weak suggestions are kept in manual review.
+
 ## Key backend endpoints
 
 - `POST /api/import-control-workbook`

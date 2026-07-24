@@ -10,6 +10,7 @@ from openpyxl import load_workbook
 
 from ..database import execute, fetch_all, fetch_one, get_connection
 from .audit import log_action
+from .ai_provider import CandidateDecision, choose_extraction_candidate
 from .automation_rules import (
     dashboard_year,
     json_list,
@@ -761,6 +762,107 @@ def _semantic_table_suggestion(sheet: SheetSnapshot, mapping: dict[str, Any], re
     }
 
 
+def _expected_ai_payload(
+    *,
+    expected_report: str | None,
+    expected_table: str | None,
+    expected_row: str | None,
+    expected_column: str | None,
+) -> dict[str, Any]:
+    return {
+        "report": expected_report,
+        "table": expected_table,
+        "row": expected_row,
+        "column_or_year": expected_column,
+    }
+
+
+def _openrouter_note(decision: CandidateDecision) -> str:
+    return f"OpenRouter suggestion: {decision.reason} (confidence {decision.confidence_score:.2f})"
+
+
+def _ai_choose_sheet(
+    *,
+    mapping: dict[str, Any],
+    report: dict[str, Any],
+    expected_report: str | None,
+    expected_table: str | None,
+    expected_row: str | None,
+    expected_column: str | None,
+    sheet_rankings: list[tuple[float, SheetSnapshot]],
+) -> tuple[SheetSnapshot | None, str | None]:
+    decision = choose_extraction_candidate(
+        task="Choose the best Excel sheet/table for this mapped SDG value.",
+        mapping=mapping,
+        report=report,
+        expected=_expected_ai_payload(
+            expected_report=expected_report,
+            expected_table=expected_table,
+            expected_row=expected_row,
+            expected_column=expected_column,
+        ),
+        candidates=[
+            {
+                "sheet_name": sheet.name,
+                "table_title": _sheet_title(sheet),
+                "deterministic_score": round(score, 3),
+                "text_preview": sheet.text_blob[:700],
+            }
+            for score, sheet in sheet_rankings[:5]
+        ],
+    )
+    if not decision:
+        return None, None
+    note = _openrouter_note(decision)
+    if decision.status == "use_candidate" and decision.selected_index is not None and decision.confidence_score >= 0.8:
+        return sheet_rankings[decision.selected_index][1], note
+    return None, note
+
+
+def _ai_choose_nearby_value(
+    *,
+    mapping: dict[str, Any],
+    report: dict[str, Any],
+    expected_report: str | None,
+    expected_table: str | None,
+    expected_row: str | None,
+    expected_column: str | None,
+    sheet: SheetSnapshot,
+    row_match: dict[str, Any],
+    column_match: dict[str, Any],
+    nearby_values: list[tuple[float, str]],
+) -> tuple[tuple[float, str] | None, str | None, float | None]:
+    decision = choose_extraction_candidate(
+        task="Choose the most likely numeric cell for this mapped SDG value.",
+        mapping=mapping,
+        report=report,
+        expected=_expected_ai_payload(
+            expected_report=expected_report,
+            expected_table=expected_table,
+            expected_row=expected_row,
+            expected_column=expected_column,
+        ),
+        candidates=[
+            {
+                "value": value,
+                "matched_cell": matched_cell,
+                "sheet_name": sheet.name,
+                "row_match": row_match.get("value"),
+                "row_match_type": row_match.get("match_type"),
+                "column_match": column_match.get("value"),
+                "column_match_type": column_match.get("match_type"),
+            }
+            for value, matched_cell in nearby_values[:8]
+        ],
+    )
+    if not decision:
+        return None, None, None
+    note = _openrouter_note(decision)
+    if decision.status == "use_candidate" and decision.selected_index is not None and decision.confidence_score >= 0.8:
+        return nearby_values[decision.selected_index], note, decision.confidence_score
+    return None, note, decision.confidence_score
+
+
 def _metadata_match(sheet: SheetSnapshot, mapping: dict[str, Any], report: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] | None:
     table_no = str(mapping.get("table_no") or "").strip()
     table_title = str(mapping.get("table_title") or "").strip()
@@ -994,45 +1096,70 @@ def extract_report(report_id: str) -> dict[str, Any]:
                 )
                 continue
 
+            sheet_ai_note = None
             if len(sheet_rankings) > 1 and sheet_rankings[0][0] >= 0.8 and abs(sheet_rankings[0][0] - sheet_rankings[1][0]) <= 0.03:
-                placeholder_id = create_review_placeholder(
-                    report_id=report_id,
+                ai_sheet, sheet_ai_note = _ai_choose_sheet(
+                    mapping=mapping,
                     report=report,
-                    mapping=mapping,
-                    year=context.get("target_year") or report.get("publication_year"),
-                    old_value=get_current_dashboard_value(
-                        mapping["indicator"],
-                        mapping.get("series_code"),
-                        int(context.get("target_year") or report.get("publication_year") or datetime.now().year),
-                    ),
-                    status="Needs Review",
-                    confidence_score=sheet_rankings[0][0],
-                    confidence_label=confidence_label(sheet_rankings[0][0]),
-                    extraction_method="Excel ambiguous sheet match",
-                    extraction_note="Multiple possible sheets matched this mapping. Enter the confirmed value after manual review.",
-                    table_or_sheet=_sheet_title(sheet_rankings[0][1]),
-                    evidence_page=sheet_rankings[0][1].name,
-                    source_evidence=sheet_rankings[0][1].name,
-                )
-                record_result(
-                    report_id=report_id,
-                    mapping=mapping,
-                    status="ambiguous_match",
-                    reason="multiple possible matches found",
                     expected_report=expected_report,
                     expected_table=expected_table,
                     expected_row=expected_row,
                     expected_column=expected_column,
-                    confidence_score=sheet_rankings[0][0],
-                    source_sheet_page=sheet_rankings[0][1].name,
-                    matched_table=_sheet_title(sheet_rankings[0][1]),
-                    proposed_update_id=placeholder_id,
+                    sheet_rankings=sheet_rankings,
                 )
-                proposals += 1
-                continue
+                if ai_sheet is not None:
+                    best_sheet = ai_sheet
+                else:
+                    review_note = "Multiple possible sheets matched this mapping. Enter the confirmed value after manual review."
+                    if sheet_ai_note:
+                        review_note = f"{review_note} {sheet_ai_note}"
+                    placeholder_id = create_review_placeholder(
+                        report_id=report_id,
+                        report=report,
+                        mapping=mapping,
+                        year=context.get("target_year") or report.get("publication_year"),
+                        old_value=get_current_dashboard_value(
+                            mapping["indicator"],
+                            mapping.get("series_code"),
+                            int(context.get("target_year") or report.get("publication_year") or datetime.now().year),
+                        ),
+                        status="Needs Review",
+                        confidence_score=sheet_rankings[0][0],
+                        confidence_label=confidence_label(sheet_rankings[0][0]),
+                        extraction_method="Excel ambiguous sheet match",
+                        extraction_note=review_note,
+                        table_or_sheet=_sheet_title(sheet_rankings[0][1]),
+                        evidence_page=sheet_rankings[0][1].name,
+                        source_evidence=sheet_rankings[0][1].name,
+                    )
+                    record_result(
+                        report_id=report_id,
+                        mapping=mapping,
+                        status="ambiguous_match",
+                        reason="multiple possible matches found",
+                        expected_report=expected_report,
+                        expected_table=expected_table,
+                        expected_row=expected_row,
+                        expected_column=expected_column,
+                        confidence_score=sheet_rankings[0][0],
+                        source_sheet_page=sheet_rankings[0][1].name,
+                        matched_table=_sheet_title(sheet_rankings[0][1]),
+                        debug_message=review_note,
+                        proposed_update_id=placeholder_id,
+                    )
+                    proposals += 1
+                    continue
+            else:
+                best_sheet = sheet_rankings[0][1]
 
-            best_sheet = sheet_rankings[0][1]
+            best_sheet_score = next(score for score, sheet in sheet_rankings if sheet.name == best_sheet.name)
+
             candidate = _direct_series_year_match(best_sheet, mapping, report) or _metadata_match(best_sheet, mapping, report, context)
+
+            if sheet_ai_note and candidate is not None:
+                candidate["confidence_score"] = min(float(candidate["confidence_score"]), 0.89)
+                candidate["confidence_label"] = confidence_label(candidate["confidence_score"])
+                candidate["extraction_note"] = f"{candidate['extraction_note']}; {sheet_ai_note}; staff approval required"
 
             if candidate is None:
                 all_cells = [
@@ -1100,6 +1227,79 @@ def extract_report(report_id: str) -> dict[str, Any]:
 
                 distinct_values = {value for value, _ in nearby_values}
                 if len(distinct_values) > 1:
+                    ai_value, value_ai_note, value_ai_confidence = _ai_choose_nearby_value(
+                        mapping=mapping,
+                        report=report,
+                        expected_report=expected_report,
+                        expected_table=expected_table,
+                        expected_row=expected_row,
+                        expected_column=expected_column,
+                        sheet=best_sheet,
+                        row_match=row_match,
+                        column_match=column_match,
+                        nearby_values=nearby_values,
+                    )
+                    if ai_value is not None:
+                        extracted_value, matched_cell = ai_value
+                        confidence = min(
+                            row_match["score"],
+                            column_match["score"],
+                            best_sheet_score,
+                            float(value_ai_confidence or 0.0),
+                            0.89,
+                        )
+                        year = int(context.get("target_year") or dashboard_year(mapping, report.get("publication_year")) or datetime.now().year)
+                        old_value = get_current_dashboard_value(mapping["indicator"], mapping.get("series_code"), year)
+                        difference = None if old_value is None else extracted_value - old_value
+                        extraction_note = "OpenRouter suggested the most likely value from multiple nearby cells; staff approval required"
+                        if value_ai_note:
+                            extraction_note = f"{extraction_note}; {value_ai_note}"
+                        if sheet_ai_note:
+                            extraction_note = f"{extraction_note}; {sheet_ai_note}"
+                        update_id, proposal_status, warnings = _insert_proposed_update(
+                            report_id=report_id,
+                            report=report,
+                            mapping=mapping,
+                            year=year,
+                            old_value=old_value,
+                            new_value=extracted_value,
+                            difference=difference,
+                            table_or_sheet=best_sheet.name,
+                            evidence_page=best_sheet.name,
+                            confidence_score=confidence,
+                            confidence_label_value=confidence_label(confidence),
+                            extraction_method="OpenRouter-assisted Excel nearby cell search",
+                            extraction_note=extraction_note,
+                            source_evidence=f"{best_sheet.name}!{matched_cell}",
+                            matched_cell=matched_cell,
+                        )
+                        proposals += 1
+                        record_result(
+                            report_id=report_id,
+                            mapping=mapping,
+                            status="ambiguous_match" if proposal_status != "Ready" else "extracted",
+                            reason="; ".join(warnings) if warnings else "OpenRouter-assisted value suggestion",
+                            expected_report=expected_report,
+                            expected_table=expected_table,
+                            expected_row=expected_row,
+                            expected_column=expected_column,
+                            closest_matched_row=row_match["value"],
+                            closest_matched_column=column_match["value"],
+                            confidence_score=confidence,
+                            source_sheet_page=best_sheet.name,
+                            extracted_value=extracted_value,
+                            matched_table=_sheet_title(best_sheet),
+                            matched_cell=matched_cell,
+                            debug_message=extraction_note,
+                            proposed_update_id=update_id,
+                        )
+                        continue
+
+                    review_note = "More than one nearby numeric value matched this row/column. Enter the confirmed value after manual review."
+                    if value_ai_note:
+                        review_note = f"{review_note} {value_ai_note}"
+                    if sheet_ai_note:
+                        review_note = f"{review_note} {sheet_ai_note}"
                     placeholder_id = create_review_placeholder(
                         report_id=report_id,
                         report=report,
@@ -1114,7 +1314,7 @@ def extract_report(report_id: str) -> dict[str, Any]:
                         confidence_score=min(row_match["score"], column_match["score"]),
                         confidence_label=confidence_label(min(row_match["score"], column_match["score"])),
                         extraction_method="Excel conflicting nearby values",
-                        extraction_note="More than one nearby numeric value matched this row/column. Enter the confirmed value after manual review.",
+                        extraction_note=review_note,
                         table_or_sheet=best_sheet.name,
                         evidence_page=best_sheet.name,
                         source_evidence=best_sheet.name,
@@ -1133,14 +1333,14 @@ def extract_report(report_id: str) -> dict[str, Any]:
                         confidence_score=min(row_match["score"], column_match["score"]),
                         source_sheet_page=best_sheet.name,
                         matched_table=_sheet_title(best_sheet),
-                        debug_message="Nearby numeric values conflict around the matched row/column.",
+                        debug_message=review_note,
                         proposed_update_id=placeholder_id,
                     )
                     proposals += 1
                     continue
 
                 extracted_value, matched_cell = nearby_values[0]
-                confidence = min(row_match["score"], column_match["score"], sheet_rankings[0][0])
+                confidence = min(row_match["score"], column_match["score"], best_sheet_score)
                 match_reason = "extracted"
                 result_status = "extracted"
                 if row_match["match_type"] == "fuzzy" or column_match["match_type"] == "fuzzy":
@@ -1149,6 +1349,10 @@ def extract_report(report_id: str) -> dict[str, Any]:
                         match_reason = "multiple possible matches found"
                     else:
                         match_reason = "cleaned text match"
+                if sheet_ai_note:
+                    confidence = min(confidence, 0.89)
+                    result_status = "ambiguous_match"
+                    match_reason = f"{match_reason}; {sheet_ai_note}; staff approval required"
                 year = int(context.get("target_year") or dashboard_year(mapping, report.get("publication_year")) or datetime.now().year)
                 old_value = get_current_dashboard_value(mapping["indicator"], mapping.get("series_code"), year)
                 difference = None if old_value is None else extracted_value - old_value
@@ -1169,9 +1373,9 @@ def extract_report(report_id: str) -> dict[str, Any]:
                     source_evidence=f"{best_sheet.name}!{matched_cell}",
                     matched_cell=matched_cell,
                 )
-                if proposal_status == "Needs Review":
+                if proposal_status != "Ready":
                     result_status = "ambiguous_match"
-                    match_reason = "; ".join(warnings) or match_reason
+                    match_reason = "; ".join(warnings) or "Proposal requires staff review"
                 proposals += 1
                 record_result(
                     report_id=report_id,
@@ -1220,9 +1424,9 @@ def extract_report(report_id: str) -> dict[str, Any]:
                 source_evidence=candidate["source_evidence"],
                 matched_cell=candidate["matched_cell"],
             )
-            if proposal_status == "Needs Review":
+            if proposal_status != "Ready":
                 result_status = "ambiguous_match"
-                reason = "; ".join(warnings) or reason
+                reason = "; ".join(warnings) or "Proposal requires staff review"
             proposals += 1
             record_result(
                 report_id=report_id,

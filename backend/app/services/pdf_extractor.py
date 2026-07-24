@@ -9,6 +9,7 @@ import pdfplumber
 
 from ..database import execute, fetch_all, fetch_one
 from .audit import log_action
+from .ai_provider import CandidateDecision, choose_extraction_candidate
 from .automation_rules import (
     dashboard_year,
     json_list,
@@ -174,6 +175,108 @@ def _nearby_numeric_values(table: list[list[Any]], row_index: int, col_index: in
                 continue
             values.append((numeric_value, f"R{current_row_index + 1}C{current_col_index + 1}"))
     return values
+
+
+def _expected_ai_payload(
+    *,
+    expected_report: str | None,
+    expected_table: str | None,
+    expected_row: str | None,
+    expected_column: str | None,
+) -> dict[str, Any]:
+    return {
+        "report": expected_report,
+        "table": expected_table,
+        "row": expected_row,
+        "column_or_year": expected_column,
+    }
+
+
+def _openrouter_note(decision: CandidateDecision) -> str:
+    return f"OpenRouter suggestion: {decision.reason} (confidence {decision.confidence_score:.2f})"
+
+
+def _ai_choose_page(
+    *,
+    mapping: dict[str, Any],
+    report: dict[str, Any],
+    expected_report: str | None,
+    expected_table: str | None,
+    expected_row: str | None,
+    expected_column: str | None,
+    page_matches: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, str | None]:
+    decision = choose_extraction_candidate(
+        task="Choose the best PDF page/table reference for this mapped SDG value.",
+        mapping=mapping,
+        report=report,
+        expected=_expected_ai_payload(
+            expected_report=expected_report,
+            expected_table=expected_table,
+            expected_row=expected_row,
+            expected_column=expected_column,
+        ),
+        candidates=[
+            {
+                "page_index": page_match["page_index"],
+                "matched_line": page_match.get("matched_line"),
+                "reference": page_match.get("reference"),
+                "deterministic_score": round(float(page_match.get("score") or 0.0), 3),
+                "match_type": page_match.get("match_type"),
+                "title_lines": page_match.get("title_lines", [])[:5],
+                "text_preview": str(page_match.get("text") or "")[:700],
+            }
+            for page_match in page_matches[:5]
+        ],
+    )
+    if not decision:
+        return None, None
+    note = _openrouter_note(decision)
+    if decision.status == "use_candidate" and decision.selected_index is not None and decision.confidence_score >= 0.8:
+        return page_matches[decision.selected_index], note
+    return None, note
+
+
+def _ai_choose_pdf_candidate(
+    *,
+    mapping: dict[str, Any],
+    report: dict[str, Any],
+    expected_report: str | None,
+    expected_table: str | None,
+    expected_row: str | None,
+    expected_column: str | None,
+    candidates: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, str | None, float | None]:
+    decision = choose_extraction_candidate(
+        task="Choose the best extracted PDF table value for this mapped SDG observation.",
+        mapping=mapping,
+        report=report,
+        expected=_expected_ai_payload(
+            expected_report=expected_report,
+            expected_table=expected_table,
+            expected_row=expected_row,
+            expected_column=expected_column,
+        ),
+        candidates=[
+            {
+                "new_value": candidate.get("new_value"),
+                "year": candidate.get("year"),
+                "matched_cell": candidate.get("matched_cell"),
+                "table_or_sheet": candidate.get("table_or_sheet"),
+                "closest_matched_row": candidate.get("closest_matched_row"),
+                "closest_matched_column": candidate.get("closest_matched_column"),
+                "deterministic_score": round(float(candidate.get("confidence_score") or 0.0), 3),
+                "extraction_note": candidate.get("extraction_note"),
+            }
+            for candidate in candidates[:8]
+        ],
+    )
+    if not decision:
+        return None, None, None
+    note = _openrouter_note(decision)
+    if decision.status == "use_candidate" and decision.selected_index is not None and decision.confidence_score >= 0.8:
+        return candidates[decision.selected_index], note, decision.confidence_score
+    return None, note, decision.confidence_score
 
 
 def _page_reference_match(page_text: str, title_lines: list[str], mapping: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] | None:
@@ -463,45 +566,62 @@ def extract_report(report_id: str) -> dict[str, Any]:
                     )
                     continue
 
+                page_ai_note = None
                 if len(page_matches) > 1 and page_matches[0]["score"] >= 0.8 and abs(page_matches[0]["score"] - page_matches[1]["score"]) <= 0.03:
-                    placeholder_id = create_review_placeholder(
-                        report_id=report_id,
+                    ai_page, page_ai_note = _ai_choose_page(
+                        mapping=mapping,
                         report=report,
-                        mapping=mapping,
-                        year=context.get("target_year") or dashboard_year(mapping, report.get("publication_year")),
-                        old_value=get_current_dashboard_value(
-                            mapping["indicator"],
-                            mapping.get("series_code"),
-                            int(context.get("target_year") or dashboard_year(mapping, report.get("publication_year")) or datetime.now().year),
-                        ),
-                        status="Needs Review",
-                        confidence_score=page_matches[0]["score"],
-                        confidence_label=confidence_label(page_matches[0]["score"]),
-                        extraction_method="PDF ambiguous page match",
-                        extraction_note="Multiple possible mapped pages found. Enter the confirmed value after manual review.",
-                        table_or_sheet=page_matches[0].get("matched_line"),
-                        evidence_page=str(page_matches[0]["page_index"]),
-                        source_evidence=f"Page {page_matches[0]['page_index']}: {page_matches[0].get('matched_line') or ''}".strip(),
-                    )
-                    record_result(
-                        report_id=report_id,
-                        mapping=mapping,
-                        status="ambiguous_match",
-                        reason="multiple possible matches found",
                         expected_report=expected_report,
                         expected_table=expected_table,
                         expected_row=expected_row,
                         expected_column=expected_column,
-                        confidence_score=page_matches[0]["score"],
-                        source_sheet_page=f"Page {page_matches[0]['page_index']}",
-                        matched_table=page_matches[0].get("matched_line"),
-                        debug_message="More than one page matched the mapped table reference with nearly the same score.",
-                        proposed_update_id=placeholder_id,
+                        page_matches=page_matches,
                     )
-                    proposals += 1
-                    continue
+                    if ai_page is not None:
+                        best_page = ai_page
+                    else:
+                        review_note = "Multiple possible mapped pages found. Enter the confirmed value after manual review."
+                        if page_ai_note:
+                            review_note = f"{review_note} {page_ai_note}"
+                        placeholder_id = create_review_placeholder(
+                            report_id=report_id,
+                            report=report,
+                            mapping=mapping,
+                            year=context.get("target_year") or dashboard_year(mapping, report.get("publication_year")),
+                            old_value=get_current_dashboard_value(
+                                mapping["indicator"],
+                                mapping.get("series_code"),
+                                int(context.get("target_year") or dashboard_year(mapping, report.get("publication_year")) or datetime.now().year),
+                            ),
+                            status="Needs Review",
+                            confidence_score=page_matches[0]["score"],
+                            confidence_label=confidence_label(page_matches[0]["score"]),
+                            extraction_method="PDF ambiguous page match",
+                            extraction_note=review_note,
+                            table_or_sheet=page_matches[0].get("matched_line"),
+                            evidence_page=str(page_matches[0]["page_index"]),
+                            source_evidence=f"Page {page_matches[0]['page_index']}: {page_matches[0].get('matched_line') or ''}".strip(),
+                        )
+                        record_result(
+                            report_id=report_id,
+                            mapping=mapping,
+                            status="ambiguous_match",
+                            reason="multiple possible matches found",
+                            expected_report=expected_report,
+                            expected_table=expected_table,
+                            expected_row=expected_row,
+                            expected_column=expected_column,
+                            confidence_score=page_matches[0]["score"],
+                            source_sheet_page=f"Page {page_matches[0]['page_index']}",
+                            matched_table=page_matches[0].get("matched_line"),
+                            debug_message=review_note,
+                            proposed_update_id=placeholder_id,
+                        )
+                        proposals += 1
+                        continue
+                else:
+                    best_page = page_matches[0]
 
-                best_page = page_matches[0]
                 if not best_page["tables"]:
                     record_result(
                         report_id=report_id,
@@ -576,11 +696,46 @@ def extract_report(report_id: str) -> dict[str, Any]:
                 result_status = best_candidate["status"]
                 result_reason = best_candidate["reason"]
                 if len(candidates) > 1:
-                    competing_values = {candidate["new_value"] for candidate in candidates[:2]}
-                    if len(competing_values) > 1 and abs(candidates[0]["confidence_score"] - candidates[1]["confidence_score"]) <= 0.04:
+                    ai_candidate, candidate_ai_note, candidate_ai_confidence = _ai_choose_pdf_candidate(
+                        mapping=mapping,
+                        report=report,
+                        expected_report=expected_report,
+                        expected_table=expected_table,
+                        expected_row=expected_row,
+                        expected_column=expected_column,
+                        candidates=candidates,
+                    )
+                    if ai_candidate is not None:
+                        best_candidate = ai_candidate
+                        best_candidate["confidence_score"] = min(
+                            float(best_candidate["confidence_score"]),
+                            float(candidate_ai_confidence or 0.0),
+                            0.89,
+                        )
+                        best_candidate["confidence_label"] = confidence_label(best_candidate["confidence_score"])
+                        best_candidate["extraction_method"] = "OpenRouter-assisted PDF table extraction"
+                        best_candidate["extraction_note"] = (
+                            f"{best_candidate['extraction_note']}; {candidate_ai_note}; staff approval required"
+                            if candidate_ai_note
+                            else f"{best_candidate['extraction_note']}; staff approval required"
+                        )
                         result_status = "ambiguous_match"
-                        result_reason = "multiple possible matches found"
-                        best_candidate["extraction_note"] = f"{best_candidate['extraction_note']}; multiple table candidates on the page"
+                        result_reason = "OpenRouter-assisted value suggestion"
+                    else:
+                        competing_values = {candidate["new_value"] for candidate in candidates[:2]}
+                        if len(competing_values) > 1 and abs(candidates[0]["confidence_score"] - candidates[1]["confidence_score"]) <= 0.04:
+                            result_status = "ambiguous_match"
+                            result_reason = "multiple possible matches found"
+                            best_candidate["extraction_note"] = f"{best_candidate['extraction_note']}; multiple table candidates on the page"
+                        if candidate_ai_note:
+                            best_candidate["extraction_note"] = f"{best_candidate['extraction_note']}; {candidate_ai_note}"
+
+                if page_ai_note:
+                    best_candidate["confidence_score"] = min(float(best_candidate["confidence_score"]), 0.89)
+                    best_candidate["confidence_label"] = confidence_label(best_candidate["confidence_score"])
+                    best_candidate["extraction_note"] = f"{best_candidate['extraction_note']}; {page_ai_note}; staff approval required"
+                    result_status = "ambiguous_match"
+                    result_reason = "OpenRouter-assisted page suggestion"
 
                 year = int(dashboard_year(mapping, best_candidate["year"]) or best_candidate["year"])
                 old_value = get_current_dashboard_value(mapping["indicator"], mapping.get("series_code"), year)
@@ -620,9 +775,9 @@ def extract_report(report_id: str) -> dict[str, Any]:
                     approved_duplicate=approved_duplicate,
                 )
                 proposal_status = proposal_status_from_warnings(best_candidate["confidence_score"], warnings)
-                if proposal_status == "Needs Review":
+                if proposal_status != "Ready":
                     result_status = "ambiguous_match"
-                    result_reason = "; ".join(warnings) or result_reason
+                    result_reason = "; ".join(warnings) or "Proposal requires staff review"
                 execute(
                     """
                     INSERT INTO proposed_updates (
