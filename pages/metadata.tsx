@@ -1,3 +1,6 @@
+// Metadata catalogue page placeholder.
+// The detailed metadata panel is available on each indicator page. This route is
+// intentionally hidden until a full standalone metadata catalogue is published.
 import type { GetStaticProps } from 'next';
 import Link from 'next/link';
 
@@ -91,6 +94,8 @@ export default function MetadataPage({
 }
 
 export const getStaticProps: GetStaticProps<MetadataPageProps> = async () => {
+  // Keep the route out of the static build while preserving the page component
+  // for future publication.
   return {
     notFound: true
   };

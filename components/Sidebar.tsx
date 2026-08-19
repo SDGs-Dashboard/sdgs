@@ -1,3 +1,5 @@
+// Left navigation for the public dashboard and admin entry point.
+// Uses base-path-aware asset URLs so logos work both locally and on GitHub Pages.
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/router';
@@ -40,24 +42,24 @@ export function Sidebar({ isOpen, onClose }: SidebarProps): JSX.Element {
       >
         <div className="mb-8 flex items-start justify-between">
           <div>
-            <div className="mb-4 flex items-center gap-3">
-              <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-soft">
+            <div className="mb-4 flex items-center gap-2.5">
+              <div className="relative h-11 w-[64px] overflow-hidden rounded-xl border border-slate-200 bg-white p-0.5 shadow-soft">
                 <Image
                   src={withBasePath('/brand/rwanda-flag.svg')}
                   alt="Flag of Rwanda"
-                  width={54}
-                  height={36}
-                  className="h-8 w-auto rounded-[3px]"
+                  fill
+                  className="object-contain p-0.5"
+                  sizes="64px"
                   priority
                 />
               </div>
-              <div className="rounded-full border border-slate-200 bg-white p-2 shadow-soft">
+              <div className="relative h-11 w-11 overflow-hidden rounded-full border border-slate-200 bg-white shadow-soft">
                 <Image
                   src={withBasePath('/brand/sdg-wheel.png')}
                   alt="United Nations Sustainable Development Goals wheel"
-                  width={40}
-                  height={40}
-                  className="h-10 w-10"
+                  fill
+                  className="object-contain scale-[1.12]"
+                  sizes="44px"
                   priority
                 />
               </div>
@@ -78,6 +80,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps): JSX.Element {
 
         <nav className="space-y-2">
           {navItems.map((item) => {
+            // Treat /public as an alias of the national overview page.
             const isActive =
               item.href === '/'
                 ? router.pathname === item.href || router.pathname === '/public'

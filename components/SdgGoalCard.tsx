@@ -1,7 +1,9 @@
+// Full SDG goal card used on the Goal Performance page.
+// Clicking a card opens the Indicator Explorer filtered to that goal.
 import Image from 'next/image';
 import Link from 'next/link';
 
-import { formatPercent, publicStatusLabel, statusClassName } from '../utils/format';
+import { goalProgressLabel, progressStatusColor, publicStatusLabel, statusClassName } from '../utils/format';
 import { withBasePath } from '../utils/site';
 import { GoalSummary } from '../utils/types';
 
@@ -10,6 +12,8 @@ interface SdgGoalCardProps {
 }
 
 export function SdgGoalCard({ goal }: SdgGoalCardProps): JSX.Element {
+  // Progress bars are visual only, so clamp to 0-100 even when analysis values
+  // slightly overshoot target due to projection math.
   const safeProgress = Math.max(0, Math.min(100, goal.targetProgressPercent));
   const visibleStatus = publicStatusLabel(goal.status);
 
@@ -48,7 +52,9 @@ export function SdgGoalCard({ goal }: SdgGoalCardProps): JSX.Element {
           </div>
           <div className="flex items-center justify-between text-slate-600">
             <span>Target progress</span>
-            <span className="font-semibold text-slate-900">{formatPercent(goal.targetProgressPercent)}</span>
+            <span className="max-w-[140px] text-right text-xs font-semibold leading-tight text-slate-700">
+              {goalProgressLabel(goal)}
+            </span>
           </div>
           <div className="flex items-center justify-between text-slate-600">
             <span>Analyzable indicators</span>
@@ -56,8 +62,8 @@ export function SdgGoalCard({ goal }: SdgGoalCardProps): JSX.Element {
           </div>
           <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
             <div
-              className="h-full rounded-full transition-all"
-              style={{ width: `${safeProgress}%`, backgroundColor: goal.color }}
+            className="h-full rounded-full transition-all"
+              style={{ width: `${safeProgress}%`, backgroundColor: progressStatusColor(goal.status) }}
             />
           </div>
         </div>

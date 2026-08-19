@@ -1,3 +1,6 @@
+// Admin automation control center.
+// Staff start here to import the mapping workbook, upload reports, view report
+// status, and export approved dashboard data.
 import { ChangeEvent, FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 
@@ -24,6 +27,7 @@ export default function NisrReportsLibraryPage(): JSX.Element {
   const [form, setForm] = useState<UploadFormState>(INITIAL_FORM);
   const [saving, setSaving] = useState(false);
   const [initializing, setInitializing] = useState(false);
+  const [deletingReportId, setDeletingReportId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -86,6 +90,28 @@ export default function NisrReportsLibraryPage(): JSX.Element {
       setError(importError instanceof Error ? importError.message : 'Import failed.');
     } finally {
       setInitializing(false);
+    }
+  };
+
+  const deleteReport = async (report: AutomationReport): Promise<void> => {
+    const confirmed = window.confirm(
+      `Delete "${report.report_name}"? This removes the uploaded file and workflow artifacts for this report.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingReportId(report.report_id);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await nisrAutomationApi.deleteReport(report.report_id);
+      setMessage(response.message);
+      await loadData();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Delete failed.');
+    } finally {
+      setDeletingReportId(null);
     }
   };
 
@@ -231,6 +257,7 @@ export default function NisrReportsLibraryPage(): JSX.Element {
                     <th className="px-4 py-3">Uploaded</th>
                     <th className="px-4 py-3">Status</th>
                     <th className="px-4 py-3">Summary</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -245,11 +272,21 @@ export default function NisrReportsLibraryPage(): JSX.Element {
                         <StatusBadge status={report.status} />
                       </td>
                       <td className="px-4 py-3 text-xs text-slate-600">{report.extraction_summary || '-'}</td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => void deleteReport(report)}
+                          disabled={deletingReportId === report.report_id}
+                          className="rounded-full border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {deletingReportId === report.report_id ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </td>
                     </tr>
                   ))}
-                  {!reports.length ? (
+                    {!reports.length ? (
                     <tr>
-                      <td className="px-4 py-5 text-slate-500" colSpan={7}>
+                      <td className="px-4 py-5 text-slate-500" colSpan={8}>
                         No reports have been loaded yet.
                       </td>
                     </tr>

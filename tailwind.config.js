@@ -1,3 +1,4 @@
+// Tailwind theme for Rwanda SDG dashboard colors, typography, and card shadows.
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [

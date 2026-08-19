@@ -1,3 +1,7 @@
+// Client-side API wrapper for the NISR automation backend.
+// The public dashboard can be served from GitHub Pages, but upload/extract/review
+// actions still require a running FastAPI backend. This wrapper keeps that backend
+// URL configurable while preserving local development defaults.
 const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_NISR_AUTOMATION_API_BASE?.trim() || 'http://127.0.0.1:8000/api';
 const API_BASE_STORAGE_KEY = 'nisrAutomationApiBase';
 const API_TOKEN_STORAGE_KEY = 'nisrAutomationSessionToken';
@@ -6,6 +10,38 @@ const normalizeApiBase = (value: string): string => value.trim().replace(/\/+$/,
 
 const isLoopbackHost = (hostname: string): boolean => hostname === 'localhost' || hostname === '127.0.0.1';
 
+const formatErrorValue = (value: unknown): string | null => {
+  if (typeof value === 'string') {
+    return value.trim() || null;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    const parts = value.map((item) => formatErrorValue(item)).filter((item): item is string => Boolean(item));
+    return parts.join(', ') || null;
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const preferredKeys = ['detail', 'error', 'message', 'msg', 'title'];
+    for (const key of preferredKeys) {
+      const formatted = formatErrorValue(record[key]);
+      if (formatted) {
+        return formatted;
+      }
+    }
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return null;
+};
+
+// Browsers treat localhost and 127.0.0.1 as different cookie origins.
+// When the dashboard is opened on localhost, align the saved API base to localhost
+// so cookie and bearer-token auth behave predictably during local testing.
 const alignLoopbackHost = (value: string): string => {
   const normalizedValue = normalizeApiBase(value);
   if (typeof window === 'undefined' || !normalizedValue) {
@@ -87,6 +123,8 @@ const backendUnavailableMessage = (): string => {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let lastNetworkError: Error | null = null;
 
+  // Try the configured URL first, then safe local fallbacks. This prevents a
+  // single stale API URL in localStorage from making the admin UI unusable.
   for (const base of getApiBases()) {
     try {
       const token = getStoredToken();
@@ -103,8 +141,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         const text = await response.text();
         let message = text || `Request failed with ${response.status}`;
         try {
-          const payload = JSON.parse(text) as { detail?: string; error?: string };
-          message = payload.detail || payload.error || message;
+          const payload = JSON.parse(text) as Record<string, unknown>;
+          message = formatErrorValue(payload) || message;
         } catch {
           // Keep the raw response text.
         }
@@ -149,6 +187,17 @@ export interface AutomationReport {
   extraction_summary?: string | null;
 }
 
+export interface DeleteReportResponse {
+  message: string;
+  deleted_report_id: string;
+  report_name?: string | null;
+  removed_extracted_table_count: number;
+  removed_extraction_result_count: number;
+  removed_proposed_update_count: number;
+  removed_approved_update_count: number;
+  removed_version_history_count: number;
+}
+
 export interface ProposedUpdate {
   update_id: string;
   mapping_id: string;
@@ -175,6 +224,20 @@ export interface ProposedUpdate {
   source_period?: string | null;
   publication_year?: number | null;
   dashboard_year?: number | null;
+  ref_area?: string | null;
+  province?: string | null;
+  district?: string | null;
+  urbanization?: string | null;
+  urbanization_code?: string | null;
+  education?: string | null;
+  education_code?: string | null;
+  occupation?: string | null;
+  occupation_code?: string | null;
+  composite?: string | null;
+  age?: string | null;
+  age_code?: string | null;
+  sex?: string | null;
+  sex_code?: string | null;
   mapping_status?: string | null;
   mapping_type?: string | null;
   validation_warnings?: string | null;
@@ -220,7 +283,10 @@ export interface ExtractionResult {
   closest_matched_column?: string | null;
   confidence_score?: number | null;
   source_sheet_page?: string | null;
+  dimension_summary?: string | null;
   extracted_value?: number | null;
+  previous_year?: number | null;
+  previous_value?: number | null;
   matched_table?: string | null;
   matched_cell?: string | null;
   debug_message?: string | null;
@@ -257,6 +323,20 @@ export interface ApprovedUpdate {
   source_period?: string | null;
   publication_year?: number | null;
   dashboard_year?: number | null;
+  ref_area?: string | null;
+  province?: string | null;
+  district?: string | null;
+  urbanization?: string | null;
+  urbanization_code?: string | null;
+  education?: string | null;
+  education_code?: string | null;
+  occupation?: string | null;
+  occupation_code?: string | null;
+  composite?: string | null;
+  age?: string | null;
+  age_code?: string | null;
+  sex?: string | null;
+  sex_code?: string | null;
   mapping_status?: string | null;
   mapping_type?: string | null;
   validation_warnings?: string | null;
@@ -338,6 +418,10 @@ export const nisrAutomationApi = {
   getSession: (): Promise<AdminSessionResponse> => request('/auth/session'),
   getSummary: (): Promise<AutomationSummary> => request('/reports/dashboard/summary'),
   getReports: (): Promise<AutomationReport[]> => request('/reports'),
+  deleteReport: (reportId: string): Promise<DeleteReportResponse> =>
+    request(`/reports/${encodeURIComponent(reportId)}`, {
+      method: 'DELETE'
+    }),
   uploadReport: (formData: FormData): Promise<{ report: AutomationReport }> =>
     request('/upload', {
       method: 'POST',

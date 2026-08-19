@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""PDF extraction engine for mapped NISR report values.
+
+Uses pdfplumber text/table extraction first and routes uncertain matches into
+manual review instead of silently approving them.
+"""
+
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,7 +15,7 @@ import pdfplumber
 
 from ..database import execute, fetch_all, fetch_one
 from .audit import log_action
-from .ai_provider import CandidateDecision, choose_extraction_candidate
+from .ai_provider import CandidateDecision, ai_assist_status, choose_extraction_candidate
 from .automation_rules import (
     dashboard_year,
     json_list,
@@ -20,7 +26,7 @@ from .automation_rules import (
     validate_candidate,
 )
 from .extraction_results import clear_report_results, create_review_placeholder, next_proposed_update_id, record_result, summarize_report_results
-from .matcher import cleaned_match, confidence_label, exact_match, fuzzy_score, normalize_text
+from .matcher import cleaned_match, confidence_label, exact_match, fuzzy_score, normalize_text, reference_text_variants
 from .report_family import family_scope_decision, mapping_family_from_record, report_family_from_record
 from .workbook_importer import get_current_dashboard_value
 from .excel_extractor import _best_label_match, _candidate_column_terms, _candidate_row_labels, _get_mapping_context
@@ -98,7 +104,7 @@ def _report_matches_mapping(report: dict[str, Any], mapping: dict[str, Any]) -> 
 
 def _mapping_reference_candidates(mapping: dict[str, Any], context: dict[str, Any]) -> list[str]:
     candidates: list[str] = []
-    source_reference = str(context.get("source_table_reference") or "").strip()
+    source_reference = str(mapping.get("source_table_reference") or context.get("source_table_reference") or "").strip()
     table_no = str(mapping.get("table_no") or "").strip()
     table_title = str(mapping.get("table_title") or "").strip()
 
@@ -106,12 +112,11 @@ def _mapping_reference_candidates(mapping: dict[str, Any], context: dict[str, An
         source_reference,
         f"{table_no}: {table_title}" if table_no and table_title else "",
         table_title,
+        table_no,
     ]:
-        normalized = str(value or "").strip()
-        if normalized and normalized not in candidates:
-            candidates.append(normalized)
-    if not candidates and table_no:
-        candidates.append(table_no)
+        for variant in reference_text_variants(value):
+            if variant not in candidates:
+                candidates.append(variant)
     return candidates
 
 
@@ -277,6 +282,23 @@ def _ai_choose_pdf_candidate(
     if decision.status == "use_candidate" and decision.selected_index is not None and decision.confidence_score >= 0.8:
         return candidates[decision.selected_index], note, decision.confidence_score
     return None, note, decision.confidence_score
+
+
+def _fallback_page_score(page_payload: dict[str, Any], mapping: dict[str, Any], context: dict[str, Any]) -> float:
+    references = _mapping_reference_candidates(mapping, context)
+    page_text = " ".join(page_payload.get("title_lines") or []) or str(page_payload.get("text") or "")[:1000]
+    reference_tokens = set().union(*(_significant_tokens(reference) for reference in references)) if references else set()
+    page_tokens = _significant_tokens(page_text)
+    overlap_score = len(reference_tokens & page_tokens) / max(len(reference_tokens), 1) if reference_tokens else 0.0
+    fuzzy = max((fuzzy_score(page_text, reference) for reference in references), default=0.0)
+    return max(overlap_score, fuzzy)
+
+
+def _top_page_debug(page_matches: list[dict[str, Any]]) -> str:
+    if not page_matches:
+        return "No PDF pages were available for matching."
+    top_items = [f"Page {page['page_index']} ({float(page.get('score') or 0.0):.2f})" for page in page_matches[:5]]
+    return f"Top candidate pages: {', '.join(top_items)}."
 
 
 def _page_reference_match(page_text: str, title_lines: list[str], mapping: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] | None:
@@ -547,27 +569,56 @@ def extract_report(report_id: str) -> dict[str, Any]:
                     continue
 
                 page_matches: list[dict[str, Any]] = []
+                fallback_page_matches: list[dict[str, Any]] = []
                 for page_payload in pages_payload:
                     page_match = _page_reference_match(page_payload["text"], page_payload["title_lines"], mapping, context)
                     if page_match and page_match["score"] >= 0.6:
                         page_matches.append({**page_payload, **page_match})
+                    fallback_page_matches.append(
+                        {
+                            **page_payload,
+                            "score": page_match["score"] if page_match else _fallback_page_score(page_payload, mapping, context),
+                            "match_type": page_match["match_type"] if page_match else "ai_fallback",
+                            "matched_line": page_match.get("matched_line") if page_match else (page_payload["title_lines"][0] if page_payload["title_lines"] else None),
+                            "reference": page_match.get("reference") if page_match else expected_table,
+                            "reason": page_match.get("reason") if page_match else "AI fallback page candidate",
+                        }
+                    )
 
                 page_matches.sort(key=lambda item: item["score"], reverse=True)
+                fallback_page_matches.sort(key=lambda item: item["score"], reverse=True)
+                best_page: dict[str, Any] | None = None
+                page_ai_note = None
                 if not page_matches:
-                    record_result(
-                        report_id=report_id,
+                    best_page, page_ai_note = _ai_choose_page(
                         mapping=mapping,
-                        status="not_found",
-                        reason="table not found",
+                        report=report,
                         expected_report=expected_report,
                         expected_table=expected_table,
                         expected_row=expected_row,
                         expected_column=expected_column,
+                        page_matches=fallback_page_matches,
                     )
-                    continue
+                    if best_page is None:
+                        debug_message = f"{page_ai_note or ai_assist_status()} {_top_page_debug(fallback_page_matches)}"
+                        record_result(
+                            report_id=report_id,
+                            mapping=mapping,
+                            status="not_found",
+                            reason="table not found",
+                            expected_report=expected_report,
+                            expected_table=expected_table,
+                            expected_row=expected_row,
+                            expected_column=expected_column,
+                            confidence_score=fallback_page_matches[0]["score"] if fallback_page_matches else None,
+                            source_sheet_page=f"Page {fallback_page_matches[0]['page_index']}" if fallback_page_matches else None,
+                            matched_table=fallback_page_matches[0].get("matched_line") if fallback_page_matches else None,
+                            debug_message=debug_message,
+                        )
+                        continue
+                    page_matches = [best_page]
 
-                page_ai_note = None
-                if len(page_matches) > 1 and page_matches[0]["score"] >= 0.8 and abs(page_matches[0]["score"] - page_matches[1]["score"]) <= 0.03:
+                if best_page is None and len(page_matches) > 1 and page_matches[0]["score"] >= 0.8 and abs(page_matches[0]["score"] - page_matches[1]["score"]) <= 0.03:
                     ai_page, page_ai_note = _ai_choose_page(
                         mapping=mapping,
                         report=report,
@@ -619,7 +670,7 @@ def extract_report(report_id: str) -> dict[str, Any]:
                         )
                         proposals += 1
                         continue
-                else:
+                elif best_page is None:
                     best_page = page_matches[0]
 
                 if not best_page["tables"]:

@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Proposed update review-queue endpoints.
+
+Staff can list and edit proposed values here, but approvals are handled by the
+approval route so audit/version history is always written consistently.
+"""
+
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query

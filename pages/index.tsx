@@ -1,13 +1,15 @@
+// Public national overview page.
+// All numbers are precomputed at build time from the SDG workbook so the public
+// dashboard can run as a fast static site on GitHub Pages.
 import type { GetStaticProps } from 'next';
 import Link from 'next/link';
-import { FiCalendar, FiCheckCircle, FiFlag, FiTarget, FiTrendingDown } from 'react-icons/fi';
+import { FiCheckCircle, FiFlag, FiTarget, FiTrendingDown } from 'react-icons/fi';
 
 import { DataAvailabilityChart } from '../components/charts/DataAvailabilityChart';
 import { KpiCard } from '../components/KpiCard';
 import { Layout } from '../components/Layout';
 import { RwandaSdgSummaryCard } from '../components/RwandaSdgSummaryCard';
 import { SdgOfficialOverviewCard } from '../components/SdgOfficialOverviewCard';
-import { formatDateLabel } from '../utils/format';
 import { getDashboardDataset } from '../utils/sdgData';
 import { DashboardDataset } from '../utils/types';
 
@@ -16,7 +18,6 @@ interface HomePageProps {
   years: number[];
   goals: number[];
   totals: DashboardDataset['totals'];
-  lastUpdated: string | null;
   overallProgress: DashboardDataset['overallProgress'];
   targetByGoal: DashboardDataset['targetByGoal'];
   overviewGoals: DashboardDataset['goals'];
@@ -28,11 +29,11 @@ export default function HomePage(props: HomePageProps): JSX.Element {
     years,
     goals,
     totals,
-    lastUpdated,
     overallProgress,
     targetByGoal,
     overviewGoals
   } = props;
+  const hasAnalyzableData = overviewGoals.some((goal) => goal.analyzableCount > 0);
 
   return (
     <Layout title="National SDG Performance Overview" searchItems={searchItems} years={years} goals={goals}>
@@ -42,7 +43,11 @@ export default function HomePage(props: HomePageProps): JSX.Element {
         <KpiCard
           label="Indicators on track"
           value={String(overallProgress.onTrack)}
-          helper={`${Math.round(overallProgress.projectedOnTrackRate)}% projected on-track rate`}
+          helper={
+            hasAnalyzableData
+              ? `${Math.round(overallProgress.projectedOnTrackRate)}% projected on-track rate`
+              : 'External data to be wired in next step'
+          }
           accent="green"
           icon={<FiCheckCircle />}
         />
@@ -52,7 +57,6 @@ export default function HomePage(props: HomePageProps): JSX.Element {
           accent="yellow"
           icon={<FiTrendingDown />}
         />
-        <KpiCard label="Last updated" value={formatDateLabel(lastUpdated)} accent="blue" icon={<FiCalendar />} />
       </section>
 
       <section className="mt-5">
@@ -62,6 +66,7 @@ export default function HomePage(props: HomePageProps): JSX.Element {
           onTrack={overallProgress.onTrack}
           moderate={overallProgress.moderate}
           needsAttention={overallProgress.needsAttention}
+          hasAnalyzableData={hasAnalyzableData}
         />
       </section>
 
@@ -93,24 +98,25 @@ export default function HomePage(props: HomePageProps): JSX.Element {
 }
 
 export const getStaticProps: GetStaticProps<HomePageProps> = async () => {
+  // Build-time dataset loading keeps the public dashboard independent from the
+  // admin automation backend. Only approved/exported workbook data is displayed.
   const dataset = getDashboardDataset();
   const overviewGoals = [...dataset.goals].sort((a, b) => a.goal - b.goal);
 
   return {
-    props: {
-      searchItems: dataset.indicators.map((indicator) => ({
-        code: indicator.code,
-        slug: indicator.slug,
-        title: indicator.title,
-        goal: indicator.goal
-      })),
-      years: dataset.filters.years,
-      goals: dataset.filters.goals,
-      totals: dataset.totals,
-      lastUpdated: dataset.lastUpdated,
-      overallProgress: dataset.overallProgress,
-      targetByGoal: dataset.targetByGoal,
-      overviewGoals
-    }
+      props: {
+        searchItems: dataset.indicators.map((indicator) => ({
+          code: indicator.code,
+          slug: indicator.slug,
+          title: indicator.title,
+          goal: indicator.goal
+        })),
+        years: dataset.filters.years,
+        goals: dataset.filters.goals,
+        totals: dataset.totals,
+        overallProgress: dataset.overallProgress,
+        targetByGoal: dataset.targetByGoal,
+        overviewGoals
+      }
   };
 };

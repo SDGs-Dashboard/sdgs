@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+"""Report library and admin dashboard summary endpoints."""
+
 from fastapi import APIRouter, HTTPException
 
 from ..database import fetch_all, fetch_one
-from ..schemas import DashboardSummary, ReportRead
+from ..schemas import DashboardSummary, DeleteReportResponse, ReportRead
+from ..services.report_cleanup import delete_report
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -39,3 +42,23 @@ def get_report(report_id: str) -> ReportRead:
     if not row:
         raise HTTPException(status_code=404, detail="Report not found.")
     return ReportRead(**row)
+
+
+@router.delete("/{report_id}", response_model=DeleteReportResponse)
+def remove_report(report_id: str) -> DeleteReportResponse:
+    try:
+        result = delete_report(report_id, "admin")
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    return DeleteReportResponse(
+        message=(
+            f"Deleted report {result['deleted_report_id']}. "
+            f"Removed {result['removed_extracted_table_count']} extracted table(s), "
+            f"{result['removed_extraction_result_count']} extraction result(s), "
+            f"{result['removed_proposed_update_count']} proposed update(s), "
+            f"{result['removed_approved_update_count']} approved update(s), and "
+            f"{result['removed_version_history_count']} version-history entry(ies)."
+        ),
+        **result,
+    )

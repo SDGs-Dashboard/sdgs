@@ -1,3 +1,6 @@
+// GitHub Pages build helper.
+// Creates a temporary static-export copy of the Next.js app, removes local-only
+// API/upload files, copies approved downloads into public assets, and writes out/.
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');

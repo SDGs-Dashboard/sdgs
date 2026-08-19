@@ -1,3 +1,4 @@
+// Legacy/local Next.js extraction route that shells out to scripts/extract_nisr_report.py.
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { parseQueryString } from '../../../../../../lib/admin/api';

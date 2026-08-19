@@ -1,3 +1,5 @@
+// Local/Node public API for listing approved download files.
+// GitHub Pages static export uses copied files instead of this route.
 import fs from 'fs';
 import path from 'path';
 

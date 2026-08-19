@@ -1,3 +1,5 @@
+"""Pydantic request/response models for the FastAPI automation API."""
+
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -5,6 +7,17 @@ from pydantic import BaseModel, Field
 
 class MessageResponse(BaseModel):
     message: str
+
+
+class DeleteReportResponse(BaseModel):
+    message: str
+    deleted_report_id: str
+    report_name: str | None = None
+    removed_extracted_table_count: int
+    removed_extraction_result_count: int
+    removed_proposed_update_count: int
+    removed_approved_update_count: int
+    removed_version_history_count: int
 
 
 class ImportResponse(BaseModel):
@@ -74,6 +87,20 @@ class ProposedUpdateRead(BaseModel):
     source_period: str | None = None
     publication_year: int | None = None
     dashboard_year: int | None = None
+    ref_area: str | None = None
+    province: str | None = None
+    district: str | None = None
+    urbanization: str | None = None
+    urbanization_code: str | None = None
+    education: str | None = None
+    education_code: str | None = None
+    occupation: str | None = None
+    occupation_code: str | None = None
+    composite: str | None = None
+    age: str | None = None
+    age_code: str | None = None
+    sex: str | None = None
+    sex_code: str | None = None
     mapping_status: str | None = None
     mapping_type: str | None = None
     validation_warnings: str | None = None
@@ -120,7 +147,10 @@ class ExtractionResultRead(BaseModel):
     closest_matched_column: str | None = None
     confidence_score: float | None = None
     source_sheet_page: str | None = None
+    dimension_summary: str | None = None
     extracted_value: float | None = None
+    previous_year: int | None = None
+    previous_value: float | None = None
     matched_table: str | None = None
     matched_cell: str | None = None
     debug_message: str | None = None
@@ -173,6 +203,20 @@ class AuditLogEntry(BaseModel):
     source_period: str | None = None
     publication_year: int | None = None
     dashboard_year: int | None = None
+    ref_area: str | None = None
+    province: str | None = None
+    district: str | None = None
+    urbanization: str | None = None
+    urbanization_code: str | None = None
+    education: str | None = None
+    education_code: str | None = None
+    occupation: str | None = None
+    occupation_code: str | None = None
+    composite: str | None = None
+    age: str | None = None
+    age_code: str | None = None
+    sex: str | None = None
+    sex_code: str | None = None
     mapping_status: str | None = None
     mapping_type: str | None = None
     validation_warnings: str | None = None

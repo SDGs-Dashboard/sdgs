@@ -1,3 +1,6 @@
+// Admin login page for the NISR automation workflow.
+// The backend URL is editable because GitHub Pages hosts only the frontend; the
+// FastAPI backend may be local or hosted separately.
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 
@@ -12,6 +15,7 @@ export default function AdminLoginPage(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Restore the last working backend URL so staff do not need to retype it.
     setApiBase(nisrAutomationApi.getStoredApiBase());
   }, []);
 

@@ -1,3 +1,4 @@
+// Text, value, year, and location helpers for NISR report parsing.
 import { IndicatorCatalogRecord } from './nisrCatalog';
 import { LOCATION_ALIASES, PROVINCE_ALIASES, RWANDA_DISTRICTS, RWANDA_PROVINCES } from './rwandaLocations';
 

@@ -1,3 +1,5 @@
+// Next.js configuration for both local development and GitHub Pages static export.
+// GitHub Pages builds run under /sdgs and cannot use Next.js API routes.
 const isGitHubPagesBuild = process.env.GITHUB_PAGES === 'true';
 const basePath = isGitHubPagesBuild ? '/sdgs' : '';
 

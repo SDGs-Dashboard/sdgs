@@ -1,3 +1,6 @@
+// Shared TypeScript models for the public SDG dashboard.
+// These interfaces describe the normalized build-time dataset consumed by pages
+// and visualization components.
 export type ProgressStatus = 'On track' | 'Moderate progress' | 'Needs attention' | 'No data';
 export type TargetDirection = 'Increase' | 'Decrease' | 'Unclear';
 
@@ -98,6 +101,7 @@ export interface GoalTargetPoint {
   goal: number;
   goalName: string;
   targetProgressPercent: number;
+  analyzableCount: number;
   onTrackCount: number;
   needsAttentionCount: number;
 }

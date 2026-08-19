@@ -1,3 +1,5 @@
+// Workbook update helpers for approved SDG data exports.
+// These functions operate on generated approved copies, never on the original workbook.
 import fs from 'fs';
 
 import XLSX from 'xlsx';

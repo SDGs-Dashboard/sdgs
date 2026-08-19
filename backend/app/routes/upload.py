@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Report upload route.
+
+Stores uploaded PDF/Excel/CSV files and registers report metadata before any
+extraction is attempted.
+"""
+
 import json
 from datetime import datetime, timezone
 from pathlib import Path

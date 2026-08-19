@@ -1,3 +1,4 @@
+// Helpers for local Next.js API routes used by the legacy admin service layer.
 import type { NextApiRequest } from 'next';
 
 export const readRawRequestBody = async (request: NextApiRequest): Promise<Buffer> => {

@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""Central safety rules for the NISR SDG automation workflow.
+
+The extractors should focus on finding candidate values. This module decides
+whether a mapping is eligible for automatic extraction, which warnings should be
+shown to reviewers, and whether a proposed update can be considered ready or
+must stay in manual review.
+"""
+
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -33,6 +41,19 @@ DIMENSION_FIELDS = (
     "sex",
     "sex_code",
 )
+OBSERVATION_DIMENSION_FIELDS = tuple(field for field in DIMENSION_FIELDS if field not in {"indicator", "series_code"})
+DIMENSION_DISPLAY_FIELDS = (
+    ("ref_area", "Area"),
+    ("province", "Province"),
+    ("district", "District"),
+    ("urbanization", "Urbanization"),
+    ("education", "Education"),
+    ("occupation", "Occupation"),
+    ("composite", "Composite"),
+    ("age", "Age"),
+    ("sex", "Sex"),
+)
+TOTAL_DIMENSION_MARKERS = {"", "_t", "t", "total", "none", "nan", "n/a", "na", "all"}
 
 
 @dataclass(frozen=True)
@@ -53,6 +74,12 @@ def is_proxy_mapping(mapping: dict[str, Any]) -> bool:
 
 
 def mapping_eligibility(mapping: dict[str, Any]) -> EligibilityDecision:
+    """Return whether a mapping row may be processed automatically.
+
+    Only corrected, Ready, Direct mappings are eligible. Needs Review, proxy,
+    To Map, unresolved, and AUTO-generated mappings are routed into review so
+    the system never silently extracts from unapproved source metadata.
+    """
     mapping_id = str(mapping.get("mapping_id") or "")
     if mapping_id.upper().startswith("AUTO-"):
         return EligibilityDecision(False, "missing_mapping", "Auto-generated mappings are blocked from automatic processing.")
@@ -110,12 +137,45 @@ def parse_json_list(value: Any) -> list[str]:
 
 
 def observation_identity(row: dict[str, Any], year: int | None = None) -> dict[str, Any]:
+    """Build the dimension-aware identity used for duplicate/overwrite checks."""
     identity: dict[str, Any] = {field: row.get(field) for field in DIMENSION_FIELDS if row.get(field) not in (None, "")}
     if year is not None:
         identity["year"] = int(year)
     elif row.get("year") not in (None, ""):
         identity["year"] = int(row["year"])
     return identity
+
+
+def clean_dimension_value(value: Any) -> str:
+    """Return a clean dimension value, treating total markers as blank."""
+    normalized = " ".join(str(value or "").strip().split())
+    if normalized.lower() in TOTAL_DIMENSION_MARKERS:
+        return ""
+    return normalized
+
+
+def dimension_values(row: dict[str, Any]) -> dict[str, str]:
+    """Extract meaningful non-total observation dimensions from a row/mapping."""
+    values: dict[str, str] = {}
+    for field in OBSERVATION_DIMENSION_FIELDS:
+        value = clean_dimension_value(row.get(field))
+        if value:
+            values[field] = value
+    return values
+
+
+def dimension_summary(row: dict[str, Any]) -> str:
+    """Create the compact target-observation label shown in admin review."""
+    values = dimension_values(row)
+    parts: list[str] = []
+    for field, label in DIMENSION_DISPLAY_FIELDS:
+        value = values.get(field)
+        if not value:
+            continue
+        if field == "ref_area" and value.upper() in {"RW", "RWA"}:
+            continue
+        parts.append(f"{label}: {value}")
+    return " | ".join(parts) if parts else "National / total"
 
 
 def identity_where_clause(identity: dict[str, Any], *, table_alias: str = "") -> tuple[str, list[Any]]:
@@ -167,6 +227,11 @@ def validate_candidate(
     duplicate: bool = False,
     approved_duplicate: bool = False,
 ) -> list[str]:
+    """Run deterministic validation after extraction or manual correction.
+
+    These warnings are deliberately conservative. Any serious validation issue
+    keeps the proposal in review even when the extractor found a numeric value.
+    """
     warnings = required_mapping_warnings(mapping)
     unit_code = str(mapping.get("unit_code") or "").strip().upper()
 
@@ -206,6 +271,7 @@ def validate_candidate(
 
 
 def proposal_status_from_warnings(confidence_score: float | None, warnings: list[str]) -> str:
+    """Convert confidence and validation warnings into the proposal queue status."""
     blocking_terms = (
         "Proxy and non-ready",
         "MPI preservation violation",

@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Mapping-workbook import and approved-dashboard export helpers.
+
+Imports the corrected NISR mapping workbook into the automation database and
+exports approved updates into a generated copy of the public SDG workbook.
+"""
+
 import re
 import shutil
 from copy import copy
@@ -10,8 +16,15 @@ from typing import Any
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
-from ..database import CONTROL_WORKBOOK_PATH, EXPORTS_DIR, execute, fetch_all, fetch_one, get_connection, init_db, init_storage, table_count
-from .automation_rules import dashboard_year, identity_where_clause, observation_identity
+from ..database import CONTROL_WORKBOOK_PATH, DATA_DIR, EXPORTS_DIR, execute, fetch_all, fetch_one, get_connection, init_db, init_storage, table_count
+from .automation_rules import (
+    OBSERVATION_DIMENSION_FIELDS,
+    dashboard_year,
+    dimension_summary,
+    dimension_values,
+    identity_where_clause,
+    observation_identity,
+)
 
 
 def utc_now() -> str:
@@ -80,6 +93,51 @@ def infer_row_label(ref_area: str, province: str, district: str, urbanization: s
     return None
 
 
+def _data_row_count(workbook_path: Path) -> int:
+    try:
+        workbook = load_workbook(workbook_path, read_only=True, data_only=True)
+        if "Data" not in workbook.sheetnames:
+            return 0
+        sheet = workbook["Data"]
+        return max(int(sheet.max_row or 0) - 1, 0)
+    except Exception:
+        return 0
+
+
+def _dashboard_data_workbook_path(control_workbook_path: Path) -> Path:
+    """Prefer the full public SDG workbook for observation rows when available."""
+    candidates = [
+        DATA_DIR / "approved" / "2025_RW-SDG_Data.xlsx",
+        DATA_DIR / "2025_RW-SDG_Data.xlsx",
+        control_workbook_path,
+    ]
+    existing_candidates = [candidate for candidate in candidates if candidate.exists()]
+    if not existing_candidates:
+        return control_workbook_path
+    return max(existing_candidates, key=_data_row_count)
+
+
+def _is_primary_dashboard_row(row_payload: dict[str, Any]) -> bool:
+    """Primary rows carry indicator-level metadata; disaggregated rows do not."""
+    ref_area = str(row_payload.get("Ref_Area") or "").strip().upper()
+    if ref_area not in {"RW", "RWA"}:
+        return False
+    for field in (
+        "Province",
+        "District",
+        "Urbanization",
+        "Education ",
+        "Education",
+        "Occupation ",
+        "Occupation",
+        "Age",
+        "Sex",
+    ):
+        if str(row_payload.get(field) or "").strip():
+            return False
+    return True
+
+
 def workbook_exists() -> bool:
     return CONTROL_WORKBOOK_PATH.exists()
 
@@ -91,6 +149,24 @@ def copy_control_workbook(source_path: str | Path) -> str:
     return str(CONTROL_WORKBOOK_PATH)
 
 
+def _purge_seeded_reports(connection: Any) -> int:
+    """Remove report rows that were auto-seeded from the control workbook."""
+    rows = connection.execute(
+        """
+        SELECT report_id
+        FROM reports
+        WHERE original_file_name IS NULL
+        """
+    ).fetchall()
+    report_ids = [str(row["report_id"]) for row in rows if row and row["report_id"]]
+    if not report_ids:
+        return 0
+
+    placeholders = ", ".join("?" for _ in report_ids)
+    connection.execute(f"DELETE FROM reports WHERE report_id IN ({placeholders})", report_ids)
+    return len(report_ids)
+
+
 def import_control_workbook(workbook_path: str | Path | None = None, *, force: bool = False) -> dict[str, Any]:
     init_storage()
     init_db()
@@ -98,6 +174,9 @@ def import_control_workbook(workbook_path: str | Path | None = None, *, force: b
     workbook_file = Path(workbook_path) if workbook_path else CONTROL_WORKBOOK_PATH
     if not workbook_file.exists():
         raise FileNotFoundError(f"Control workbook not found at {workbook_file}")
+
+    with get_connection() as connection:
+        _purge_seeded_reports(connection)
 
     if table_count("source_mapping") > 0 and not force:
         return {
@@ -129,12 +208,16 @@ def import_control_workbook(workbook_path: str | Path | None = None, *, force: b
             """
         )
 
-        data_sheet = workbook["Data"]
+        data_workbook_path = _dashboard_data_workbook_path(workbook_file)
+        data_workbook = load_workbook(data_workbook_path, read_only=True, data_only=True)
+        data_sheet = data_workbook["Data"]
         data_headers = [cell for cell in next(data_sheet.iter_rows(min_row=1, max_row=1, values_only=True))]
         year_columns = [(index, int(header)) for index, header in enumerate(data_headers) if isinstance(header, int)]
         table_ref_index = data_headers.index("Table name and number") if "Table name and number" in data_headers else None
 
         for row_number, row in enumerate(data_sheet.iter_rows(min_row=2, values_only=True), start=2):
+            row_payload = {str(data_headers[position] or "").strip(): row[position] for position in range(len(data_headers))}
+            is_primary_row = _is_primary_dashboard_row(row_payload)
             indicator = str(row[0] or "").strip()
             series = str(row[1] or "").strip()
             series_code = str(row[2] or "").strip()
@@ -168,66 +251,89 @@ def import_control_workbook(workbook_path: str | Path | None = None, *, force: b
                     latest_year = year
                     latest_value = value
 
-            cursor.execute(
+            existing_indicator = cursor.execute(
                 """
-                INSERT INTO indicators (
-                    indicator_code, series, series_code, dashboard_description, unit_code,
-                    data_source, latest_year, latest_value, geography, disaggregation,
-                    source_table_reference, metadata_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(indicator_code, series_code) DO UPDATE SET
-                    series = excluded.series,
-                    dashboard_description = excluded.dashboard_description,
-                    unit_code = excluded.unit_code,
-                    data_source = excluded.data_source,
-                    latest_year = excluded.latest_year,
-                    latest_value = excluded.latest_value,
-                    geography = excluded.geography,
-                    disaggregation = excluded.disaggregation,
-                    source_table_reference = excluded.source_table_reference,
-                    metadata_json = excluded.metadata_json,
-                    updated_at = excluded.updated_at
+                SELECT id
+                FROM indicators
+                WHERE indicator_code = ?
+                  AND COALESCE(series_code, '') = COALESCE(?, '')
+                LIMIT 1
                 """,
-                (
-                    indicator,
-                    series,
-                    series_code or None,
-                    description,
-                    unit_code or None,
-                    data_source or None,
-                    latest_year,
-                    latest_value,
-                    ref_area or "RW",
-                    None,
-                    table_reference or None,
-                    "{}",
-                    now,
-                    now,
-                ),
+                (indicator, series_code or None),
+            ).fetchone()
+            if is_primary_row or existing_indicator is None:
+                cursor.execute(
+                    """
+                    INSERT INTO indicators (
+                        indicator_code, series, series_code, dashboard_description, unit_code,
+                        data_source, latest_year, latest_value, geography, disaggregation,
+                        source_table_reference, metadata_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(indicator_code, series_code) DO UPDATE SET
+                        series = excluded.series,
+                        dashboard_description = excluded.dashboard_description,
+                        unit_code = excluded.unit_code,
+                        data_source = excluded.data_source,
+                        latest_year = excluded.latest_year,
+                        latest_value = excluded.latest_value,
+                        geography = excluded.geography,
+                        disaggregation = excluded.disaggregation,
+                        source_table_reference = excluded.source_table_reference,
+                        metadata_json = excluded.metadata_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        indicator,
+                        series,
+                        series_code or None,
+                        description,
+                        unit_code or None,
+                        data_source or None,
+                        latest_year,
+                        latest_value,
+                        ref_area or "RW",
+                        dimension_summary(
+                            {
+                                "ref_area": ref_area,
+                                "province": province,
+                                "district": district,
+                                "urbanization": urbanization,
+                                "education": education,
+                                "occupation": occupation,
+                                "age": age,
+                                "sex": sex,
+                            }
+                        ),
+                        table_reference or None,
+                        "{}",
+                        now,
+                        now,
+                    ),
                 )
 
             table_no, table_title = parse_table_reference(table_reference)
             mapping_key = (indicator, series_code or "")
             mapping_seed = mapping_seeds.get(mapping_key, {})
-            mapping_seeds[mapping_key] = {
-                "indicator": indicator,
-                "series": series,
-                "series_code": series_code or None,
-                "dashboard_description": description or None,
-                "unit_code": unit_code or None,
-                "data_source": data_source or None,
-                "latest_year": latest_year,
-                "latest_value": latest_value,
-                "report_family": infer_report_family(data_source),
-                "report_year": latest_year,
-                "file_type": "pdf+excel",
-                "table_no": table_no,
-                "table_title": table_title,
-                "report_indicator_name": description or series or None,
-                "row_label": infer_row_label(ref_area, province, district, urbanization),
-                "source_table_reference": table_reference or None,
-                "existing": mapping_seed.get("existing", False),
-            }
+            if is_primary_row or not mapping_seed:
+                mapping_seeds[mapping_key] = {
+                    "indicator": indicator,
+                    "series": series,
+                    "series_code": series_code or None,
+                    "dashboard_description": description or None,
+                    "unit_code": unit_code or None,
+                    "data_source": data_source or None,
+                    "latest_year": latest_year,
+                    "latest_value": latest_value,
+                    "report_family": infer_report_family(data_source),
+                    "report_year": latest_year,
+                    "file_type": "pdf+excel",
+                    "table_no": table_no,
+                    "table_title": table_title,
+                    "report_indicator_name": description or series or None,
+                    "row_label": infer_row_label(ref_area, province, district, urbanization),
+                    "source_table_reference": table_reference or None,
+                    "existing": mapping_seed.get("existing", False),
+                }
 
             for column_index, year in year_columns:
                 cursor.execute(
@@ -292,12 +398,12 @@ def import_control_workbook(workbook_path: str | Path | None = None, *, force: b
                 INSERT INTO source_mapping (
                     mapping_id, indicator, series, series_code, dashboard_description, unit_code,
                     data_source, latest_year, latest_value, report_family, report_name, report_year,
-                    file_type, file_name_or_link, sheet_or_page, table_no, table_title,
+                    file_type, file_name_or_link, sheet_or_page, source_table_reference, table_no, table_title,
                     report_indicator_name, row_label, column_label, geography, disaggregation,
                     extraction_method, confidence, status, reviewer, notes, mapping_type,
                     source_or_survey_period, publication_year, dashboard_display_year,
                     calculation_or_transformation_rule, required_nisr_review_action, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     mapping_id,
@@ -315,6 +421,7 @@ def import_control_workbook(workbook_path: str | Path | None = None, *, force: b
                     str(payload.get("File_Type") or "").strip() or seed.get("file_type"),
                     str(payload.get("File_Name_or_Link") or "").strip() or None,
                     str(payload.get("Sheet_or_Page") or "").strip() or None,
+                    seed.get("source_table_reference"),
                     str(payload.get("Table_No") or "").strip() or seed_table_no,
                     str(payload.get("Table_Title") or "").strip() or seed_table_title,
                     str(payload.get("Report_Indicator_Name") or "").strip() or seed_report_indicator_name,
@@ -337,42 +444,56 @@ def import_control_workbook(workbook_path: str | Path | None = None, *, force: b
                     now,
                 ),
             )
+            dimension_column_aliases = {
+                "ref_area": ("Ref_Area", "Reference_Area", "Geography_Code"),
+                "province": ("Province",),
+                "district": ("District",),
+                "urbanization": ("Urbanization",),
+                "urbanization_code": ("Urbanization_Code",),
+                "education": ("Education", "Education "),
+                "education_code": ("Education_Code",),
+                "occupation": ("Occupation", "Occupation "),
+                "occupation_code": ("Occupation_Code",),
+                "composite": ("Composite", "Composite "),
+                "age": ("Age", "Age_Group"),
+                "age_code": ("Age_Code",),
+                "sex": ("Sex",),
+                "sex_code": ("Sex_Code",),
+            }
+            dimension_values_for_mapping: dict[str, str | None] = {}
+            for field, aliases in dimension_column_aliases.items():
+                value = next((str(payload.get(alias) or "").strip() for alias in aliases if str(payload.get(alias) or "").strip()), "")
+                dimension_values_for_mapping[field] = value or seed.get(field)
+            cursor.execute(
+                """
+                UPDATE source_mapping
+                SET ref_area = ?, province = ?, district = ?, urbanization = ?, urbanization_code = ?,
+                    education = ?, education_code = ?, occupation = ?, occupation_code = ?, composite = ?,
+                    age = ?, age_code = ?, sex = ?, sex_code = ?
+                WHERE mapping_id = ?
+                """,
+                (
+                    dimension_values_for_mapping.get("ref_area"),
+                    dimension_values_for_mapping.get("province"),
+                    dimension_values_for_mapping.get("district"),
+                    dimension_values_for_mapping.get("urbanization"),
+                    dimension_values_for_mapping.get("urbanization_code"),
+                    dimension_values_for_mapping.get("education"),
+                    dimension_values_for_mapping.get("education_code"),
+                    dimension_values_for_mapping.get("occupation"),
+                    dimension_values_for_mapping.get("occupation_code"),
+                    dimension_values_for_mapping.get("composite"),
+                    dimension_values_for_mapping.get("age"),
+                    dimension_values_for_mapping.get("age_code"),
+                    dimension_values_for_mapping.get("sex"),
+                    dimension_values_for_mapping.get("sex_code"),
+                    mapping_id,
+                ),
+            )
             imported_mapping_keys.add((indicator, series_code))
 
         # Do not generate AUTO-* mappings. The corrected NISR_Source_Mapping sheet is
         # the source of truth; unmapped indicators must stay in manual review.
-
-        register_sheet = workbook["Report_Register"]
-        register_headers = [str(cell or "").strip() for cell in next(register_sheet.iter_rows(min_row=1, max_row=1, values_only=True))]
-        for index, row in enumerate(register_sheet.iter_rows(min_row=2, values_only=True), start=1):
-            payload = {register_headers[position]: row[position] for position in range(len(register_headers))}
-            report_family = str(payload.get("Report_Family") or "").strip()
-            report_id = str(payload.get("Report_ID") or generate_id("REP", index))
-            if not report_family and not payload.get("Report_Name"):
-                continue
-            cursor.execute(
-                """
-                INSERT INTO reports (
-                    report_id, report_name, report_family, report_type, source_institution,
-                    publication_year, file_path, original_file_name, upload_date, status,
-                    extraction_summary, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    report_id,
-                    str(payload.get("Report_Name") or report_family or report_id),
-                    report_family or None,
-                    str(payload.get("File_Type") or "pending"),
-                    "NISR",
-                    to_int(payload.get("Report_Year")),
-                    str(payload.get("File_Name_or_Link") or "").strip() or None,
-                    None,
-                    now,
-                    str(payload.get("Status") or "Not Started"),
-                    "Imported from Report_Register",
-                    "{}",
-                ),
-            )
 
         connection.commit()
 
@@ -407,7 +528,10 @@ def export_updated_dashboard_workbook() -> Path:
         if target_year <= 0:
             continue
         column_number = ensure_year_column(workbook, sheet, target_year)
-        dashboard_row = find_dashboard_observation(mapping, target_year)
+        dashboard_row = find_dashboard_observation(
+            {**mapping, **{field: approved.get(field) for field in OBSERVATION_DIMENSION_FIELDS}},
+            target_year,
+        )
         row_number = dashboard_row.get("source_row_number") if dashboard_row else None
         if row_number:
             sheet.cell(row=int(row_number), column=column_number).value = approved["new_value"]
@@ -467,6 +591,20 @@ def update_num_columns(workbook: Any, year_count: int) -> None:
 
 
 def find_dashboard_observation(mapping: dict[str, Any], year: int) -> dict[str, Any] | None:
+    has_explicit_dimensions = any(field in mapping for field in OBSERVATION_DIMENSION_FIELDS)
+    if has_explicit_dimensions:
+        identity = {
+            "indicator": mapping["indicator"],
+            "series_code": mapping.get("series_code") or "",
+            "year": year,
+        }
+        for field in OBSERVATION_DIMENSION_FIELDS:
+            identity[field] = mapping.get(field) or ""
+        where_clause, params = identity_where_clause(identity)
+        exact_row = fetch_one(f"SELECT * FROM dashboard_data WHERE {where_clause} LIMIT 1", params)
+        if exact_row:
+            return exact_row
+
     candidates = fetch_all(
         """
         SELECT *
@@ -536,7 +674,16 @@ def find_dashboard_observation(mapping: dict[str, Any], year: int) -> dict[str, 
     return row or best_row
 
 
-def get_current_dashboard_value(indicator: str, series_code: str | None, year: int) -> float | None:
+def get_current_dashboard_value(
+    indicator: str,
+    series_code: str | None,
+    year: int,
+    target: dict[str, Any] | None = None,
+) -> float | None:
+    if target:
+        row = find_dashboard_observation({**target, "indicator": indicator, "series_code": series_code}, year)
+        return float(row["value"]) if row and row["value"] is not None else None
+
     row = fetch_one(
         """
         SELECT value

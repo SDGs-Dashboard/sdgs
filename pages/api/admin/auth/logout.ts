@@ -1,3 +1,4 @@
+// Legacy/local Next.js admin logout route.
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { clearAdminSessionCookie } from '../../../../lib/admin/auth';

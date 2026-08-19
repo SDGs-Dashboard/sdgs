@@ -1,3 +1,4 @@
+// Legacy/local Next.js route for editing extracted values before approval.
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { parseQueryString } from '../../../../../lib/admin/api';

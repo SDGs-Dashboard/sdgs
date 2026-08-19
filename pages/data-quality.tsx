@@ -1,3 +1,6 @@
+// Public target-analysis page.
+// This page explains which indicators are likely on track, off track, or still
+// pending enough data for trajectory analysis.
 import type { GetStaticProps } from 'next';
 import Link from 'next/link';
 
@@ -5,6 +8,7 @@ import { DataAvailabilityChart } from '../components/charts/DataAvailabilityChar
 import { EmptyState } from '../components/EmptyState';
 import { KpiCard } from '../components/KpiCard';
 import { Layout } from '../components/Layout';
+import { goalProgressLabel } from '../utils/format';
 import { DashboardDataset, IndicatorSummary } from '../utils/types';
 
 interface DataQualityPageProps {
@@ -27,6 +31,7 @@ function IndicatorList({
   indicators: IndicatorSummary[];
   emptyMessage: string;
 }): JSX.Element {
+  // Reused compact list for each target-analysis bucket.
   return (
     <div className="panel border border-slate-200 p-4">
       <h3 className="font-heading text-base font-semibold text-slate-900">{title}</h3>
@@ -80,10 +85,15 @@ export default function DataQualityPage({
                 <span className="font-semibold text-slate-900">
                   Goal {goal.goal}: {goal.goalName}
                 </span>
-                <span className="text-slate-700">{goal.targetProgressPercent.toFixed(1)}%</span>
+                <span className="max-w-[190px] text-right text-xs font-semibold leading-tight text-slate-700">
+                  {goalProgressLabel(goal)}
+                </span>
               </div>
               <div className="mt-2 h-2 rounded-full bg-slate-100">
-                <div className="h-full rounded-full bg-rwBlue" style={{ width: `${goal.targetProgressPercent}%` }} />
+                <div
+                  className="h-full rounded-full bg-rwBlue"
+                  style={{ width: `${goal.analyzableCount === 0 ? 0 : goal.targetProgressPercent}%` }}
+                />
               </div>
               <div className="mt-2 flex items-center gap-4 text-xs text-slate-600">
                 <span>On track: {goal.onTrackCount}</span>

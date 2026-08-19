@@ -1,3 +1,6 @@
+// Public downloads page.
+// Lists approved files from data/approved; static exports link to copied assets,
+// while local/Node deployments can serve the same files through an API route.
 import fs from 'fs';
 import path from 'path';
 
@@ -99,6 +102,8 @@ const listApprovedFiles = (): Array<{
   updatedAt: string;
   url: string;
 }> => {
+  // NEXT_PUBLIC_STATIC_EXPORT is set during GitHub Pages builds, where API
+  // routes are not available and downloads must resolve to static files.
   const isStaticBuild = process.env.NEXT_PUBLIC_STATIC_EXPORT === 'true';
   const root = path.join(process.cwd(), 'data', 'approved');
   if (!fs.existsSync(root)) {

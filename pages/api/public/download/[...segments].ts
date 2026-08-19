@@ -1,3 +1,5 @@
+// Local/Node public API for serving approved dashboard files.
+// The path is resolved under data/approved only to prevent directory traversal.
 import fs from 'fs';
 import path from 'path';
 
@@ -37,6 +39,7 @@ export default function publicDownloadFileHandler(request: NextApiRequest, respo
   const requestedPath = Array.isArray(segments) ? segments.join('/') : segments;
   const absolutePath = path.resolve(APPROVED_PUBLIC_DIR, requestedPath);
   const approvedRoot = path.resolve(APPROVED_PUBLIC_DIR);
+  // Safety check: never serve files outside the approved public directory.
   if (!absolutePath.startsWith(approvedRoot)) {
     response.status(400).json({ error: 'Invalid file path.' });
     return;

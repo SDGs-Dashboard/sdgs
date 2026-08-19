@@ -1,3 +1,4 @@
+// Builds an indicator catalogue from approved workbook data and metadata files.
 import fs from 'fs';
 import path from 'path';
 

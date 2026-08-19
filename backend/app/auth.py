@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Signed cookie and bearer-token admin authentication for FastAPI routes."""
+
 import base64
 import hashlib
 import hmac

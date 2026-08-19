@@ -1,3 +1,5 @@
+// Static SDG goal catalogue used for labels, colors, and goal ordering.
+// Indicator data comes from the workbook; this file supplies the official 17-goal frame.
 export interface SdgGoalInfo {
   goal: number;
   name: string;

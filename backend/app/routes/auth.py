@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Authentication endpoints for the FastAPI admin backend."""
+
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response

@@ -1,3 +1,6 @@
+// Public indicator explorer.
+// Filtering is handled in the browser against a static indicator summary list,
+// which keeps the page responsive and deployable without a public API server.
 import { useEffect, useMemo, useState } from 'react';
 
 import type { GetStaticProps } from 'next';
@@ -58,6 +61,8 @@ export default function IndicatorExplorerPage({
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
 
   useEffect(() => {
+    // Keep filters shareable: URLs like /indicators?goal=1&status=On%20track
+    // open with the same filter state after refresh or sharing.
     setFilters({
       search: String(router.query.search ?? ''),
       goal: String(router.query.goal ?? ''),
@@ -70,6 +75,8 @@ export default function IndicatorExplorerPage({
   }, [router.query]);
 
   const filteredIndicators = useMemo(() => {
+    // Apply filters in-memory. The dataset is small enough for this to be faster
+    // and simpler than adding a public search endpoint.
     const search = filters.search.trim().toLowerCase();
     const selectedYear = filters.year ? Number(filters.year) : null;
 
@@ -120,6 +127,7 @@ export default function IndicatorExplorerPage({
   };
 
   const downloadFiltered = () => {
+    // Export only the visible rows so staff/users can preserve their filtered view.
     const headers = [
       'Code',
       'Title',

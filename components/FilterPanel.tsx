@@ -1,3 +1,5 @@
+// Indicator Explorer filter controls.
+// This component is controlled by the page so filters can also be synced to URL query parameters.
 interface FilterPanelProps {
   search: string;
   goal: string;

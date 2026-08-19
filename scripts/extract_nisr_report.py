@@ -1,3 +1,9 @@
+"""Standalone helper for inspecting NISR reports outside the FastAPI workflow.
+
+The production automation uses backend/app/services/* extractors. This script is
+kept for quick command-line table inspection and debugging.
+"""
+
 import json
 import os
 import re

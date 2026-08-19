@@ -1,3 +1,4 @@
+// Legacy/local Next.js reports route for JSON-backed admin workflows.
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { parseQueryString, readRawRequestBody } from '../../../../../lib/admin/api';

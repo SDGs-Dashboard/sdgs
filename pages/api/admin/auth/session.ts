@@ -1,3 +1,4 @@
+// Legacy/local Next.js admin session route.
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { getAdminSessionFromRequest } from '../../../../lib/admin/auth';

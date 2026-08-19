@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Excel export endpoints for the admin automation workflow."""
+
 from datetime import datetime
 from pathlib import Path
 

@@ -1,3 +1,6 @@
+// Build-time SDG data loader for the public dashboard.
+// It reads the approved SDG workbook plus metadata markdown, normalizes rows,
+// computes indicator/goal progress summaries, and caches the resulting dataset.
 import fs from 'fs';
 import path from 'path';
 
@@ -51,6 +54,8 @@ interface IndicatorBucket {
 }
 
 const resolvePublicExcelPath = (): string => {
+  // Prefer explicitly configured public data, then approved exports, then fall
+  // back to the baseline workbook so local development always has data.
   const envPath = process.env.PUBLIC_SDG_DATA_PATH?.trim();
   if (envPath) {
     const absolute = path.isAbsolute(envPath) ? envPath : path.join(process.cwd(), envPath);
@@ -150,6 +155,8 @@ const safeString = (value: unknown): string => {
 };
 
 const sourcePassesFilter = (source: string): boolean => {
+  // Public dashboard can be limited to NISR-approved sources by default. Set
+  // PUBLIC_DATA_SOURCE_FILTER=all to include every source in the workbook.
   if (!PUBLIC_DATA_SOURCE_FILTER || PUBLIC_DATA_SOURCE_FILTER === 'all') {
     return true;
   }
@@ -208,6 +215,8 @@ const getGoalTarget = (code: string): { goal: number; target: string } => {
 };
 
 const getSpecificityScore = (row: ParsedRow): number => {
+  // Lower scores mean fewer disaggregations. The headline trend should prefer
+  // national/all-person rows before more specific sex/age/location breakdowns.
   const dimensions = [
     row.sex,
     row.age,
@@ -264,6 +273,9 @@ const inferTargetValue = (
   latestValue: number,
   trend: Array<{ year: number; value: number }>
 ): number | null => {
+  // Official 2030 target thresholds are not available for every workbook row.
+  // This fallback infers a conservative target from unit, direction, baseline,
+  // latest value, and observed range so every analyzable indicator can be ranked.
   if (direction === 'Unclear') {
     return null;
   }
@@ -315,6 +327,8 @@ const analyzeTargetProgress = (
   targetText: string,
   unit: string
 ): TargetAnalysis => {
+  // This is the central public dashboard status formula. It converts the primary
+  // time series into On track / Moderate progress / Needs attention / No data.
   const hasData = trend.length > 0;
   if (!hasData) {
     return {
@@ -461,6 +475,7 @@ const analyzeTargetProgress = (
 };
 
 const pickPrimarySeries = (rows: ParsedRow[]): ParsedRow | null => {
+  // Headline charts use the least-disaggregated row with the longest time series.
   const withValues = rows.filter((row) => row.yearValues.length > 0);
   if (!withValues.length) {
     return null;
@@ -485,6 +500,7 @@ type DisaggregationDimensionKey =
   | 'district';
 
 const buildDisaggregation = (rows: ParsedRow[], latestYear: number | null): DisaggregationData | null => {
+  // Build one latest-year breakdown chart from the first dimension with values.
   if (!latestYear) {
     return null;
   }
@@ -753,6 +769,8 @@ const overallOnTrackWeighted = (indicators: IndicatorSummary[]): number => {
 };
 
 const buildDataset = (): DashboardDataset => {
+  // One build step produces everything the public dashboard needs: overview KPIs,
+  // goal summaries, indicator summaries, detail pages, filters, and quality lists.
   const metadataByIndicator = parseMetadata();
   const { buckets, years } = loadRows();
 
@@ -846,6 +864,8 @@ const buildDataset = (): DashboardDataset => {
   indicators.sort((a, b) => sortNatural(a.code, b.code));
 
   const goals: GoalSummary[] = SDG_GOALS.map((goalInfo) => {
+    // Goal percentages are averages across indicators with analyzable target
+    // progress. Indicators without enough data are counted but not averaged.
     const byGoal = indicators.filter((indicator) => indicator.goal === goalInfo.goal);
     const indicatorCount = byGoal.length;
     const withDataCount = byGoal.filter((indicator) => indicator.hasData).length;
@@ -901,6 +921,7 @@ const buildDataset = (): DashboardDataset => {
       goal: goal.goal,
       goalName: goal.shortName,
       targetProgressPercent: Number(goal.targetProgressPercent.toFixed(1)),
+      analyzableCount: goal.analyzableCount,
       onTrackCount,
       needsAttentionCount
     };
@@ -909,6 +930,8 @@ const buildDataset = (): DashboardDataset => {
   const analyzableIndicators = indicators.filter((indicator) => indicator.targetProgressPercent !== null);
 
   const overallProgress = {
+    // Projected on-track rate uses a weighted count: On track = 1,
+    // Moderate progress = 0.5, Needs attention = 0.
     onTrack: indicators.filter((indicator) => indicator.status === 'On track').length,
     moderate: indicators.filter((indicator) => indicator.status === 'Moderate progress').length,
     needsAttention: indicators.filter((indicator) => indicator.status === 'Needs attention').length,

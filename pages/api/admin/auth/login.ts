@@ -1,3 +1,5 @@
+// Legacy/local Next.js admin login route.
+// Current hosted automation should use the FastAPI /api/auth/login endpoint.
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { clearAdminSessionCookie, createAdminSessionToken, setAdminSessionCookie, validateAdminCredentials } from '../../../../lib/admin/auth';

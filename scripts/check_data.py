@@ -1,3 +1,9 @@
+"""Legacy Open SDG validation script.
+
+Use this when validating Open SDG-style data/metadata. The current public
+Next.js dashboard build is validated separately with `npm run build`.
+"""
+
 from _utf8 import patch_pandas_compatibility, prefer_utf8_file_io
 
 prefer_utf8_file_io()
@@ -7,12 +13,12 @@ from sdg.open_sdg import open_sdg_check
 
 
 def alter_meta(meta):
-# Automatically detect global indicators.
+    # Automatically detect global indicators.
     if 'indicator_number' in meta:
         indicator_id = meta['indicator_number']
         id_parts = indicator_id.split('.')
 
-        # Automatically set some predicable properties.
+        # Automatically set predictable properties.
         meta['goal_number'] = id_parts[0]
         meta['target_number'] = id_parts[0] + '.' + id_parts[1]
         meta['target_name'] = 'global_targets.' + id_parts[0] + '-' + id_parts[1] + '-title'

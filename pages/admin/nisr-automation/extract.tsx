@@ -1,3 +1,6 @@
+// Admin extraction runner.
+// It triggers the FastAPI backend to process one uploaded report against the
+// metadata mapping workbook and then links to debug/review screens.
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 

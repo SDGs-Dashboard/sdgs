@@ -7,11 +7,13 @@ This project adds a local, metadata-driven SDG automation workflow built around 
 - `backend/` FastAPI automation API, using SQLite locally or Postgres when `DATABASE_URL` is set
 - `frontend/` React frontend for local staff workflows
 - `data/` SQLite database, workbook copy, uploads, processed files, exports
+- `docs/CODEBASE_GUIDE.md` full public dashboard and admin/backend code guide
+- `docs/NISR_AUTOMATION_CODE_GUIDE.md` developer guide for the automation codebase
 
 ## First version workflow
 
 1. Import `NISR_SDG_Automation_Mapping_Built.xlsx` into SQLite.
-2. Upload one Excel or PDF report.
+2. Manually upload the report you want to process.
 3. Use `NISR_Source_Mapping` as the source of truth for matching.
 4. Save extracted candidates into `proposed_updates`.
 5. Approve or reject proposed updates.

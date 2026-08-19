@@ -1,3 +1,9 @@
+"""Database and filesystem helpers for the FastAPI automation backend.
+
+Uses SQLite by default for local development and switches to Postgres when
+`DATABASE_URL` is configured.
+"""
+
 import json
 import os
 import sqlite3
@@ -24,6 +30,21 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
 SCHEMA_ADDITIONS: dict[str, dict[str, str]] = {
     "source_mapping": {
+        "source_table_reference": "TEXT",
+        "ref_area": "TEXT",
+        "province": "TEXT",
+        "district": "TEXT",
+        "urbanization": "TEXT",
+        "urbanization_code": "TEXT",
+        "education": "TEXT",
+        "education_code": "TEXT",
+        "occupation": "TEXT",
+        "occupation_code": "TEXT",
+        "composite": "TEXT",
+        "age": "TEXT",
+        "age_code": "TEXT",
+        "sex": "TEXT",
+        "sex_code": "TEXT",
         "mapping_type": "TEXT",
         "source_or_survey_period": "TEXT",
         "publication_year": "INTEGER",
@@ -45,6 +66,20 @@ SCHEMA_ADDITIONS: dict[str, dict[str, str]] = {
         "source_period": "TEXT",
         "publication_year": "INTEGER",
         "dashboard_year": "INTEGER",
+        "ref_area": "TEXT",
+        "province": "TEXT",
+        "district": "TEXT",
+        "urbanization": "TEXT",
+        "urbanization_code": "TEXT",
+        "education": "TEXT",
+        "education_code": "TEXT",
+        "occupation": "TEXT",
+        "occupation_code": "TEXT",
+        "composite": "TEXT",
+        "age": "TEXT",
+        "age_code": "TEXT",
+        "sex": "TEXT",
+        "sex_code": "TEXT",
         "mapping_status": "TEXT",
         "mapping_type": "TEXT",
         "validation_warnings": "TEXT",
@@ -54,10 +89,27 @@ SCHEMA_ADDITIONS: dict[str, dict[str, str]] = {
         "source_period": "TEXT",
         "publication_year": "INTEGER",
         "dashboard_year": "INTEGER",
+        "ref_area": "TEXT",
+        "province": "TEXT",
+        "district": "TEXT",
+        "urbanization": "TEXT",
+        "urbanization_code": "TEXT",
+        "education": "TEXT",
+        "education_code": "TEXT",
+        "occupation": "TEXT",
+        "occupation_code": "TEXT",
+        "composite": "TEXT",
+        "age": "TEXT",
+        "age_code": "TEXT",
+        "sex": "TEXT",
+        "sex_code": "TEXT",
         "mapping_status": "TEXT",
         "mapping_type": "TEXT",
         "validation_warnings": "TEXT",
         "approval_action": "TEXT",
+    },
+    "extraction_results": {
+        "dimension_summary": "TEXT",
     },
 }
 

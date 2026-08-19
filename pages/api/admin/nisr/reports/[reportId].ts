@@ -1,3 +1,4 @@
+// Legacy/local Next.js report detail/delete route.
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { parseQueryString } from '../../../../../lib/admin/api';

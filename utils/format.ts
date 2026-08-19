@@ -1,4 +1,6 @@
-import { ProgressStatus } from './types';
+// Formatting helpers shared by public dashboard pages and components.
+// Keep display logic here so pages do not each define their own number/date/status labels.
+import { GoalSummary, ProgressStatus } from './types';
 
 export const CURRENT_YEAR = new Date().getFullYear();
 
@@ -18,6 +20,14 @@ export const formatPercent = (value: number | null | undefined): string => {
   }
 
   return `${Math.round(value)}%`;
+};
+
+export const goalProgressLabel = (goal: Pick<GoalSummary, 'analyzableCount' | 'targetProgressPercent'>): string => {
+  if (goal.analyzableCount === 0) {
+    return 'External data to be wired in next step';
+  }
+
+  return formatPercent(goal.targetProgressPercent);
 };
 
 export const formatDateLabel = (value: string | null): string => {
@@ -77,7 +87,22 @@ export const statusClassName = (status: ProgressStatus): string => {
   }
 };
 
+export const progressStatusColor = (status: ProgressStatus): string => {
+  switch (status) {
+    case 'On track':
+      return '#16a34a';
+    case 'Moderate progress':
+      return '#f59e0b';
+    case 'Needs attention':
+      return '#e11d48';
+    default:
+      return '#64748b';
+  }
+};
+
 export const publicStatusLabel = (status: ProgressStatus): string => {
+  // Public wording avoids showing "No data" as a failure; these indicators are
+  // usually pending validation or publication.
   if (status === 'No data') {
     return 'Under review';
   }

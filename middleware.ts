@@ -1,3 +1,5 @@
+// Middleware protects legacy/local Next.js admin API routes.
+// FastAPI admin routes enforce authentication separately in backend/app/main.py.
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 

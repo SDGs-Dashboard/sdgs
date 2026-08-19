@@ -1,3 +1,5 @@
+// Local/Node public API for approved source evidence on indicator detail pages.
+// Static GitHub Pages builds use preloaded source rows instead.
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { readAdminDb } from '../../../../lib/admin/db';
@@ -29,4 +31,3 @@ export default function publicIndicatorSourceHandler(request: NextApiRequest, re
     sources: rows
   });
 }
-

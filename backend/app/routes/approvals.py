@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Approval endpoints for proposed SDG updates.
+
+This is the only place where proposed values are applied to dashboard data.
+Every action writes audit and version-history records.
+"""
+
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
@@ -7,7 +13,7 @@ from fastapi import APIRouter, HTTPException
 from ..database import execute, fetch_one, get_connection
 from ..schemas import MessageResponse, ReviewActionRequest
 from ..services.audit import log_action
-from ..services.automation_rules import json_list, parse_json_list, validate_candidate
+from ..services.automation_rules import OBSERVATION_DIMENSION_FIELDS, json_list, parse_json_list, validate_candidate
 from ..services.workbook_importer import find_dashboard_observation
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
@@ -18,8 +24,10 @@ def utc_now() -> str:
 
 
 def _apply_dashboard_update(connection, update: dict, mapping: dict) -> tuple[int, float | None]:
+    """Insert or update one dashboard observation after staff approval."""
     previous_value = None
-    existing = find_dashboard_observation(mapping, int(update["year"]))
+    target_mapping = {**mapping, **{field: update.get(field) for field in OBSERVATION_DIMENSION_FIELDS}}
+    existing = find_dashboard_observation(target_mapping, int(update["year"]))
 
     if existing:
         previous_value = existing["value"]
@@ -33,9 +41,10 @@ def _apply_dashboard_update(connection, update: dict, mapping: dict) -> tuple[in
         """
         INSERT INTO dashboard_data (
             indicator, series, series_code, unit_code, data_source, description,
-            ref_area, province, district, urbanization, education, age, sex, year,
+            ref_area, province, district, urbanization, urbanization_code, education, education_code,
+            occupation, occupation_code, composite, age, age_code, sex, sex_code, year,
             value, table_name_and_number, source_row_number, source_year_column, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             update["indicator"],
@@ -44,13 +53,20 @@ def _apply_dashboard_update(connection, update: dict, mapping: dict) -> tuple[in
             update["unit_code"],
             "NISR",
             None,
-            "RW",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            update.get("ref_area") or mapping.get("ref_area") or "RW",
+            update.get("province") or mapping.get("province"),
+            update.get("district") or mapping.get("district"),
+            update.get("urbanization") or mapping.get("urbanization"),
+            update.get("urbanization_code") or mapping.get("urbanization_code"),
+            update.get("education") or mapping.get("education"),
+            update.get("education_code") or mapping.get("education_code"),
+            update.get("occupation") or mapping.get("occupation"),
+            update.get("occupation_code") or mapping.get("occupation_code"),
+            update.get("composite") or mapping.get("composite"),
+            update.get("age") or mapping.get("age"),
+            update.get("age_code") or mapping.get("age_code"),
+            update.get("sex") or mapping.get("sex"),
+            update.get("sex_code") or mapping.get("sex_code"),
             update["year"],
             update["new_value"],
             update["table_or_sheet"],
@@ -64,13 +80,17 @@ def _apply_dashboard_update(connection, update: dict, mapping: dict) -> tuple[in
 
 
 def _find_duplicate_approval(connection, update: dict) -> dict | None:
+    dimension_clause = "\n          ".join(
+        f"AND COALESCE({field}, '') = COALESCE(?, '')" for field in OBSERVATION_DIMENSION_FIELDS
+    )
     row = connection.execute(
-        """
+        f"""
         SELECT *
         FROM approved_updates
         WHERE indicator = ?
           AND COALESCE(series_code, '') = COALESCE(?, '')
           AND year = ?
+          {dimension_clause}
           AND COALESCE(source_report, '') = COALESCE(?, '')
           AND COALESCE(table_or_sheet, '') = COALESCE(?, '')
           AND new_value = ?
@@ -80,6 +100,7 @@ def _find_duplicate_approval(connection, update: dict) -> dict | None:
             update["indicator"],
             update["series_code"],
             update["year"],
+            *(update.get(field) or "" for field in OBSERVATION_DIMENSION_FIELDS),
             update["source_report"],
             update["table_or_sheet"],
             update["new_value"],
@@ -89,15 +110,24 @@ def _find_duplicate_approval(connection, update: dict) -> dict | None:
 
 
 def _approved_observation_exists(update: dict) -> bool:
+    dimension_clause = "\n          ".join(
+        f"AND COALESCE({field}, '') = COALESCE(?, '')" for field in OBSERVATION_DIMENSION_FIELDS
+    )
     row = fetch_one(
-        """
+        f"""
         SELECT COUNT(*) AS total
         FROM approved_updates
         WHERE mapping_id = ?
           AND COALESCE(dashboard_year, year) = ?
+          {dimension_clause}
           AND proposed_update_id <> ?
         """,
-        (update["mapping_id"], update.get("dashboard_year") or update["year"], update["update_id"]),
+        (
+            update["mapping_id"],
+            update.get("dashboard_year") or update["year"],
+            *(update.get(field) or "" for field in OBSERVATION_DIMENSION_FIELDS),
+            update["update_id"],
+        ),
     )
     return bool(row and int(row["total"]) > 0)
 
@@ -126,15 +156,13 @@ def review_update(update_id: str, payload: ReviewActionRequest) -> MessageRespon
             )
         )
         warnings = sorted(set(warnings))
-        if any("Attempted overwrite" in warning for warning in warnings):
-            raise HTTPException(status_code=409, detail="This approval would overwrite already approved data. Reject or return it for review.")
         with get_connection() as connection:
             duplicate = _find_duplicate_approval(connection, update)
             if duplicate and duplicate["proposed_update_id"] != update_id:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Duplicate approval already exists for {update['indicator']} {update['year']} from this source.",
+                warnings.append(
+                    f"Duplicate approval override: an approved value already exists for {update['indicator']} {update['year']} from this source."
                 )
+                warnings = sorted(set(warnings))
 
             dashboard_data_id, previous_value = _apply_dashboard_update(connection, update, mapping)
             approval_time = utc_now()
@@ -144,8 +172,10 @@ def review_update(update_id: str, payload: ReviewActionRequest) -> MessageRespon
                     proposed_update_id, mapping_id, indicator, series_code, year, old_value,
                     new_value, unit_code, source_report, table_or_sheet, evidence_page,
                     approved_by, approved_at, source_evidence, source_period, publication_year,
-                    dashboard_year, mapping_status, mapping_type, validation_warnings, approval_action
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    dashboard_year, ref_area, province, district, urbanization, urbanization_code,
+                    education, education_code, occupation, occupation_code, composite, age, age_code,
+                    sex, sex_code, mapping_status, mapping_type, validation_warnings, approval_action
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(proposed_update_id) DO UPDATE SET
                     mapping_id = excluded.mapping_id,
                     indicator = excluded.indicator,
@@ -163,6 +193,20 @@ def review_update(update_id: str, payload: ReviewActionRequest) -> MessageRespon
                     source_period = excluded.source_period,
                     publication_year = excluded.publication_year,
                     dashboard_year = excluded.dashboard_year,
+                    ref_area = excluded.ref_area,
+                    province = excluded.province,
+                    district = excluded.district,
+                    urbanization = excluded.urbanization,
+                    urbanization_code = excluded.urbanization_code,
+                    education = excluded.education,
+                    education_code = excluded.education_code,
+                    occupation = excluded.occupation,
+                    occupation_code = excluded.occupation_code,
+                    composite = excluded.composite,
+                    age = excluded.age,
+                    age_code = excluded.age_code,
+                    sex = excluded.sex,
+                    sex_code = excluded.sex_code,
                     mapping_status = excluded.mapping_status,
                     mapping_type = excluded.mapping_type,
                     validation_warnings = excluded.validation_warnings,
@@ -186,6 +230,7 @@ def review_update(update_id: str, payload: ReviewActionRequest) -> MessageRespon
                     update.get("source_period"),
                     update.get("publication_year"),
                     update.get("dashboard_year") or update["year"],
+                    *(update.get(field) for field in OBSERVATION_DIMENSION_FIELDS),
                     update.get("mapping_status"),
                     update.get("mapping_type"),
                     json_list(warnings),

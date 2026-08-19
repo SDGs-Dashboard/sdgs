@@ -41,14 +41,17 @@ a {
 }
 
 @layer components {
+  /* Shared shell used across dashboard/admin cards. */
   .panel {
     @apply rounded-card border border-slate-200 bg-white shadow-soft;
   }
 
+  /* Compact status/category pill. */
   .soft-badge {
     @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold;
   }
 
+  /* Standard dashboard section heading. */
   .section-title {
     @apply font-heading text-2xl font-semibold text-slate-900;
   }

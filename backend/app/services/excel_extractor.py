@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Excel/CSV extraction engine for mapped NISR report values.
+
+Reads all workbook sheets, searches mapped table/row/column/year metadata, and
+records both successful values and explainable non-matches.
+"""
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,9 +16,13 @@ from openpyxl import load_workbook
 
 from ..database import execute, fetch_all, fetch_one, get_connection
 from .audit import log_action
-from .ai_provider import CandidateDecision, choose_extraction_candidate
+from .ai_provider import CandidateDecision, ai_assist_status, choose_extraction_candidate
 from .automation_rules import (
+    OBSERVATION_DIMENSION_FIELDS,
+    clean_dimension_value,
     dashboard_year,
+    dimension_summary,
+    dimension_values,
     json_list,
     mapping_eligibility,
     proposal_status_from_warnings,
@@ -21,9 +31,9 @@ from .automation_rules import (
     validate_candidate,
 )
 from .extraction_results import clear_report_results, create_review_placeholder, next_proposed_update_id, record_result, summarize_report_results
-from .matcher import cleaned_match, confidence_label, exact_match, fuzzy_score, normalize_text, score_match
+from .matcher import cleaned_match, confidence_label, exact_match, fuzzy_score, normalize_text, reference_text_variants, score_match
 from .report_family import family_scope_decision, mapping_family_from_record, report_family_from_record
-from .workbook_importer import get_current_dashboard_value
+from .workbook_importer import find_dashboard_observation, get_current_dashboard_value
 
 
 def utc_now() -> str:
@@ -95,6 +105,132 @@ def _significant_tokens(value: Any) -> set[str]:
     }
 
 
+DIMENSION_COLUMN_ALIASES = {
+    "ref_area": ("ref_area", "reference area", "geography", "area code"),
+    "province": ("province",),
+    "district": ("district",),
+    "urbanization": ("urbanization", "residence", "area of residence", "urban rural"),
+    "urbanization_code": ("urbanization_code", "urbanization code"),
+    "education": ("education", "education level"),
+    "education_code": ("education_code", "education code"),
+    "occupation": ("occupation",),
+    "occupation_code": ("occupation_code", "occupation code"),
+    "composite": ("composite",),
+    "age": ("age", "age group", "age_group"),
+    "age_code": ("age_code", "age code"),
+    "sex": ("sex", "gender"),
+    "sex_code": ("sex_code", "sex code", "gender code"),
+}
+
+
+def _append_unique(items: list[str], value: Any) -> None:
+    normalized = clean_dimension_value(value)
+    if normalized and normalized not in items:
+        items.append(normalized)
+
+
+def _dimension_cell_matches(cell_value: Any, target_value: Any) -> bool:
+    cell = clean_dimension_value(cell_value)
+    target = clean_dimension_value(target_value)
+    if not target:
+        return not cell
+    if not cell:
+        return False
+    if exact_match(cell, target) or cleaned_match(cell, target):
+        return True
+    target_normalized = normalize_text(target)
+    cell_normalized = normalize_text(cell)
+    if target_normalized in {"rw", "rwa", "rwanda"} and cell_normalized in {"rw", "rwa", "rwanda", "all rwanda", "national"}:
+        return True
+    return fuzzy_score(cell, target) >= 0.92
+
+
+def _dimension_column_index(header_lookup: dict[str, int], field: str) -> int | None:
+    for alias in DIMENSION_COLUMN_ALIASES.get(field, (field,)):
+        index = header_lookup.get(normalize_text(alias))
+        if index is not None:
+            return index
+    return None
+
+
+def _row_matches_target_dimensions(row: list[Any], header_lookup: dict[str, int], mapping: dict[str, Any]) -> bool:
+    if not mapping.get("_dimension_target"):
+        return True
+    for field in OBSERVATION_DIMENSION_FIELDS:
+        col_index = _dimension_column_index(header_lookup, field)
+        if col_index is None or col_index >= len(row):
+            continue
+        if not _dimension_cell_matches(row[col_index], mapping.get(field)):
+            return False
+    return True
+
+
+def _dashboard_observation_targets(mapping: dict[str, Any], target_year: int | None) -> list[dict[str, Any]]:
+    if not mapping_eligibility(mapping).eligible:
+        return [mapping]
+
+    rows: list[dict[str, Any]] = []
+    if target_year is not None:
+        rows = fetch_all(
+            """
+            SELECT *
+            FROM dashboard_data
+            WHERE indicator = ?
+              AND COALESCE(series_code, '') = COALESCE(?, '')
+              AND year = ?
+            ORDER BY
+              CASE WHEN COALESCE(district, '') <> '' THEN 4
+                   WHEN COALESCE(province, '') <> '' THEN 3
+                   WHEN COALESCE(urbanization, '') <> '' THEN 2
+                   WHEN COALESCE(age, '') <> '' OR COALESCE(sex, '') <> '' THEN 1
+                   ELSE 0 END,
+              source_row_number,
+              id
+            """,
+            (mapping["indicator"], mapping.get("series_code"), int(target_year)),
+        )
+
+    if not rows:
+        rows = fetch_all(
+            """
+            SELECT *
+            FROM dashboard_data
+            WHERE indicator = ?
+              AND COALESCE(series_code, '') = COALESCE(?, '')
+              AND year = (
+                  SELECT MAX(year)
+                  FROM dashboard_data
+                  WHERE indicator = ?
+                    AND COALESCE(series_code, '') = COALESCE(?, '')
+              )
+            ORDER BY source_row_number, id
+            """,
+            (mapping["indicator"], mapping.get("series_code"), mapping["indicator"], mapping.get("series_code")),
+        )
+
+    if not rows:
+        return [mapping]
+
+    targets: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for row in rows:
+        target = dict(mapping)
+        target["_dimension_target"] = True
+        target["_dashboard_data_id"] = row.get("id")
+        target["_source_row_number"] = row.get("source_row_number")
+        target["_dimension_summary"] = dimension_summary(row)
+        target["latest_year"] = row.get("year") or target.get("latest_year")
+        target["latest_value"] = row.get("value")
+        for field in OBSERVATION_DIMENSION_FIELDS:
+            target[field] = row.get(field) or ""
+        identity = tuple(target.get(field) or "" for field in OBSERVATION_DIMENSION_FIELDS)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        targets.append(target)
+    return targets
+
+
 def _sheet_title(sheet: SheetSnapshot) -> str:
     if sheet.rows and sheet.rows[0]:
         first = sheet.rows[0][0]
@@ -105,7 +241,7 @@ def _sheet_title(sheet: SheetSnapshot) -> str:
 
 def _mapping_reference_candidates(mapping: dict[str, Any], context: dict[str, Any]) -> list[str]:
     candidates: list[str] = []
-    source_reference = str(context.get("source_table_reference") or "").strip()
+    source_reference = str(mapping.get("source_table_reference") or context.get("source_table_reference") or "").strip()
     table_no = str(mapping.get("table_no") or "").strip()
     table_title = str(mapping.get("table_title") or "").strip()
 
@@ -113,12 +249,11 @@ def _mapping_reference_candidates(mapping: dict[str, Any], context: dict[str, An
         source_reference,
         f"{table_no}: {table_title}" if table_no and table_title else "",
         table_title,
+        table_no,
     ]:
-        normalized = str(value or "").strip()
-        if normalized and normalized not in candidates:
-            candidates.append(normalized)
-    if not candidates and table_no:
-        candidates.append(table_no)
+        for variant in reference_text_variants(value):
+            if variant not in candidates:
+                candidates.append(variant)
     return candidates
 
 
@@ -135,11 +270,26 @@ def _expected_report_text(mapping: dict[str, Any], report: dict[str, Any]) -> st
 def _expected_column_text(mapping: dict[str, Any], context: dict[str, Any], report: dict[str, Any]) -> str:
     target_year = dashboard_year(mapping, context.get("target_year") or report.get("publication_year"))
     column_label = str(mapping.get("column_label") or "").strip()
+    dimension_bits = [
+        value
+        for field, value in dimension_values(mapping).items()
+        if field
+        in {
+            "sex",
+            "age",
+            "urbanization",
+            "education",
+            "occupation",
+            "province",
+            "district",
+        }
+    ]
+    dimension_text = " / ".join(dimension_bits)
     if column_label and target_year not in (None, ""):
-        return f"{column_label} / {target_year}"
+        return " / ".join(part for part in [column_label, dimension_text, str(target_year)] if part)
     if column_label:
-        return column_label
-    return str(target_year or "").strip()
+        return " / ".join(part for part in [column_label, dimension_text] if part)
+    return " / ".join(part for part in [dimension_text, str(target_year or "").strip()] if part)
 
 
 def _best_label_match(cells: list[tuple[int, int, Any]], labels: list[str]) -> dict[str, Any] | None:
@@ -186,6 +336,8 @@ def _sheet_reference_score(sheet: SheetSnapshot, references: list[str]) -> tuple
     best_score = 0.0
     best_reference = None
     for reference in references:
+        if re.fullmatch(r"(table|figure)\s+[a-z0-9.]+", normalize_text(reference)) and normalize_text(reference) in normalize_text(title):
+            return 1.0, reference
         if exact_match(title, reference):
             return 1.0, reference
         if cleaned_match(title, reference):
@@ -285,7 +437,8 @@ def _report_matches_mapping(report: dict[str, Any], mapping: dict[str, Any]) -> 
     mapping_report_name = normalize_text(mapping.get("report_name"))
     report_name = normalize_text(report.get("report_name"))
 
-    if mapping_file_type and "excel" not in mapping_file_type and "pdf+excel" not in mapping_file_type:
+    excel_companion_for_pdf = report_type in {"excel", "xls", "xlsx", "csv"} and "pdf" in mapping_file_type
+    if mapping_file_type and "excel" not in mapping_file_type and "pdf+excel" not in mapping_file_type and not excel_companion_for_pdf:
         return False
     family_allowed, _, _ = family_scope_decision(report, mapping)
     if not family_allowed:
@@ -301,18 +454,7 @@ def _get_mapping_context(mapping: dict[str, Any], report: dict[str, Any]) -> dic
 
     dashboard_row = None
     if params:
-        dashboard_row = fetch_one(
-            """
-            SELECT *
-            FROM dashboard_data
-            WHERE indicator = ?
-              AND COALESCE(series_code, '') = COALESCE(?, '')
-              AND year = ?
-            ORDER BY CASE WHEN ref_area = 'RW' THEN 0 ELSE 1 END, id
-            LIMIT 1
-            """,
-            params,
-        )
+        dashboard_row = find_dashboard_observation(mapping, int(target_year))
     if dashboard_row is None:
         dashboard_row = fetch_one(
             """
@@ -346,30 +488,45 @@ def _get_mapping_context(mapping: dict[str, Any], report: dict[str, Any]) -> dic
     return context
 
 
+def _dimension_duplicate_clause(mapping: dict[str, Any]) -> tuple[str, list[Any]]:
+    if not mapping.get("_dimension_target"):
+        return "", []
+    clauses = []
+    params = []
+    for field in OBSERVATION_DIMENSION_FIELDS:
+        clauses.append(f"AND COALESCE({field}, '') = COALESCE(?, '')")
+        params.append(mapping.get(field) or "")
+    return "\n          ".join(clauses), params
+
+
 def _proposal_duplicate_exists(mapping: dict[str, Any], year: int, report_id: str, update_id: str | None = None) -> bool:
+    dimension_clause, dimension_params = _dimension_duplicate_clause(mapping)
     row = fetch_one(
-        """
+        f"""
         SELECT COUNT(*) AS total
         FROM proposed_updates
         WHERE mapping_id = ?
           AND year = ?
           AND source_report_id = ?
+          {dimension_clause}
           AND (? IS NULL OR update_id <> ?)
         """,
-        (mapping["mapping_id"], year, report_id, update_id, update_id),
+        (mapping["mapping_id"], year, report_id, *dimension_params, update_id, update_id),
     )
     return bool(row and int(row["total"]) > 0)
 
 
 def _approved_duplicate_exists(mapping: dict[str, Any], year: int) -> bool:
+    dimension_clause, dimension_params = _dimension_duplicate_clause(mapping)
     row = fetch_one(
-        """
+        f"""
         SELECT COUNT(*) AS total
         FROM approved_updates
         WHERE mapping_id = ?
           AND COALESCE(dashboard_year, year) = ?
+          {dimension_clause}
         """,
-        (mapping["mapping_id"], year),
+        (mapping["mapping_id"], year, *dimension_params),
     )
     return bool(row and int(row["total"]) > 0)
 
@@ -413,9 +570,10 @@ def _insert_proposed_update(
             difference, unit_code, source_report, source_report_id, table_or_sheet, evidence_page,
             extraction_date, status, reviewer_comment, confidence_score, confidence_label,
             extraction_method, extraction_note, source_evidence, matched_cell, source_period,
-            publication_year, dashboard_year, mapping_status, mapping_type, validation_warnings,
-            source_year, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            publication_year, dashboard_year, ref_area, province, district, urbanization, urbanization_code,
+            education, education_code, occupation, occupation_code, composite, age, age_code, sex, sex_code,
+            mapping_status, mapping_type, validation_warnings, source_year, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             update_id,
@@ -443,6 +601,7 @@ def _insert_proposed_update(
             source_period(mapping),
             mapping.get("publication_year") or report.get("publication_year"),
             year,
+            *(mapping.get(field) for field in OBSERVATION_DIMENSION_FIELDS),
             mapping.get("status"),
             mapping.get("mapping_type"),
             json_list(warnings),
@@ -504,6 +663,8 @@ def _direct_series_year_match(sheet: SheetSnapshot, mapping: dict[str, Any], rep
         indicator_match = bool(target_indicator and indicator_col is not None and exact_match(row[indicator_col], target_indicator))
         if not (series_match or indicator_match):
             continue
+        if not _row_matches_target_dimensions(row, normalized_header, mapping):
+            continue
 
         value = row[year_col] if year_col is not None and year_col < len(row) else None
         try:
@@ -532,7 +693,7 @@ def _direct_series_year_match(sheet: SheetSnapshot, mapping: dict[str, Any], rep
             "confidence_score": score,
             "confidence_label": confidence_label(score),
             "extraction_method": "Excel direct row/year",
-            "extraction_note": note,
+            "extraction_note": f"{note}; target observation: {dimension_summary(mapping)}",
         }
     return None
 
@@ -566,21 +727,35 @@ def _find_column_match(sheet: SheetSnapshot, label: str, year: int | None) -> tu
 
 def _candidate_row_labels(mapping: dict[str, Any], context: dict[str, Any]) -> list[str]:
     labels: list[str] = []
-    for value in [
-        mapping.get("row_label"),
+    mapping_dimensions = dimension_values(mapping)
+    target_values = [
         context.get("district"),
         context.get("province"),
         context.get("urbanization"),
-    ]:
-        normalized = str(value or "").strip()
-        if normalized and normalized not in labels:
-            labels.append(normalized)
+        mapping_dimensions.get("district"),
+        mapping_dimensions.get("province"),
+        mapping_dimensions.get("urbanization"),
+        mapping_dimensions.get("education"),
+        mapping_dimensions.get("occupation"),
+        mapping_dimensions.get("age"),
+        mapping_dimensions.get("sex"),
+    ]
+    sex = mapping_dimensions.get("sex")
+    age = mapping_dimensions.get("age")
+    if sex and age:
+        target_values.extend([f"{sex} {age}", f"{age} {sex}"])
+    for value in target_values:
+        _append_unique(labels, value)
+
+    has_specific_dimensions = bool(labels)
+    _append_unique(labels, mapping.get("row_label"))
 
     ref_area = str(context.get("ref_area") or context.get("geography") or "").strip().upper()
-    if ref_area in {"RW", "RWA"} or str(context.get("row_label") or "").strip().lower() == "rwanda":
+    if not has_specific_dimensions and (
+        ref_area in {"RW", "RWA"} or str(context.get("row_label") or "").strip().lower() == "rwanda"
+    ):
         for label in ["All Rwanda", "Rwanda", "National", "Total"]:
-            if label not in labels:
-                labels.append(label)
+            _append_unique(labels, label)
     return labels
 
 
@@ -618,6 +793,13 @@ def _candidate_column_terms(mapping: dict[str, Any], context: dict[str, Any], ta
         context.get("dashboard_description"),
         context.get("education"),
     ]
+    for field in ("sex", "age", "urbanization", "education", "occupation", "province", "district"):
+        _append_unique(terms, mapping.get(field))
+    sex = clean_dimension_value(mapping.get("sex"))
+    age = clean_dimension_value(mapping.get("age"))
+    if sex and age:
+        _append_unique(terms, f"{sex} {age}")
+        _append_unique(terms, f"{age} {sex}")
     phrases = [
         "net attendance rate",
         "gross attendance rate",
@@ -863,6 +1045,13 @@ def _ai_choose_nearby_value(
     return None, note, decision.confidence_score
 
 
+def _top_sheet_debug(sheet_rankings: list[tuple[float, SheetSnapshot]]) -> str:
+    if not sheet_rankings:
+        return "No workbook sheets were available for matching."
+    top_items = [f"{sheet.name} ({score:.2f})" for score, sheet in sheet_rankings[:5]]
+    return f"Top candidate sheets: {', '.join(top_items)}."
+
+
 def _metadata_match(sheet: SheetSnapshot, mapping: dict[str, Any], report: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] | None:
     table_no = str(mapping.get("table_no") or "").strip()
     table_title = str(mapping.get("table_title") or "").strip()
@@ -977,7 +1166,11 @@ def extract_report(report_id: str) -> dict[str, Any]:
         raise ValueError("Report not found.")
 
     snapshots = _load_workbook_snapshot(report["file_path"])
-    mappings = fetch_all("SELECT * FROM source_mapping ORDER BY mapping_id")
+    base_mappings = fetch_all("SELECT * FROM source_mapping ORDER BY mapping_id")
+    mappings: list[dict[str, Any]] = []
+    for source_mapping in base_mappings:
+        target_year = dashboard_year(source_mapping, report.get("publication_year"))
+        mappings.extend(_dashboard_observation_targets(source_mapping, target_year))
 
     clear_report_results(report_id)
 
@@ -1037,6 +1230,7 @@ def extract_report(report_id: str) -> dict[str, Any]:
                         mapping["indicator"],
                         mapping.get("series_code"),
                         int(context.get("target_year") or dashboard_year(mapping, report.get("publication_year")) or datetime.now().year),
+                        target=mapping,
                     ),
                     status="Needs Review",
                     confidence_score=0.0,
@@ -1076,28 +1270,46 @@ def extract_report(report_id: str) -> dict[str, Any]:
                 )
                 continue
 
-            sheet_rankings: list[tuple[float, SheetSnapshot]] = []
+            all_sheet_rankings: list[tuple[float, SheetSnapshot]] = []
             for sheet in snapshots:
                 sheet_score, _ = _sheet_reference_score(sheet, _mapping_reference_candidates(mapping, context))
-                if sheet_score >= 0.6:
-                    sheet_rankings.append((sheet_score, sheet))
+                all_sheet_rankings.append((sheet_score, sheet))
 
+            all_sheet_rankings.sort(key=lambda item: item[0], reverse=True)
+            sheet_rankings = [item for item in all_sheet_rankings if item[0] >= 0.6]
             sheet_rankings.sort(key=lambda item: item[0], reverse=True)
+            best_sheet: SheetSnapshot | None = None
+            sheet_ai_note = None
             if not sheet_rankings:
-                record_result(
-                    report_id=report_id,
+                best_sheet, sheet_ai_note = _ai_choose_sheet(
                     mapping=mapping,
-                    status="not_found",
-                    reason="table not found",
+                    report=report,
                     expected_report=expected_report,
                     expected_table=expected_table,
                     expected_row=expected_row,
                     expected_column=expected_column,
+                    sheet_rankings=all_sheet_rankings,
                 )
-                continue
+                if best_sheet is None:
+                    debug_message = f"{sheet_ai_note or ai_assist_status()} {_top_sheet_debug(all_sheet_rankings)}"
+                    record_result(
+                        report_id=report_id,
+                        mapping=mapping,
+                        status="not_found",
+                        reason="table not found",
+                        expected_report=expected_report,
+                        expected_table=expected_table,
+                        expected_row=expected_row,
+                        expected_column=expected_column,
+                        confidence_score=all_sheet_rankings[0][0] if all_sheet_rankings else None,
+                        source_sheet_page=all_sheet_rankings[0][1].name if all_sheet_rankings else None,
+                        matched_table=_sheet_title(all_sheet_rankings[0][1]) if all_sheet_rankings else None,
+                        debug_message=debug_message,
+                    )
+                    continue
+                sheet_rankings = [item for item in all_sheet_rankings if item[1].name == best_sheet.name] or [(0.0, best_sheet)]
 
-            sheet_ai_note = None
-            if len(sheet_rankings) > 1 and sheet_rankings[0][0] >= 0.8 and abs(sheet_rankings[0][0] - sheet_rankings[1][0]) <= 0.03:
+            if best_sheet is None and len(sheet_rankings) > 1 and sheet_rankings[0][0] >= 0.8 and abs(sheet_rankings[0][0] - sheet_rankings[1][0]) <= 0.03:
                 ai_sheet, sheet_ai_note = _ai_choose_sheet(
                     mapping=mapping,
                     report=report,
@@ -1122,6 +1334,7 @@ def extract_report(report_id: str) -> dict[str, Any]:
                             mapping["indicator"],
                             mapping.get("series_code"),
                             int(context.get("target_year") or report.get("publication_year") or datetime.now().year),
+                            target=mapping,
                         ),
                         status="Needs Review",
                         confidence_score=sheet_rankings[0][0],
@@ -1149,7 +1362,7 @@ def extract_report(report_id: str) -> dict[str, Any]:
                     )
                     proposals += 1
                     continue
-            else:
+            elif best_sheet is None:
                 best_sheet = sheet_rankings[0][1]
 
             best_sheet_score = next(score for score, sheet in sheet_rankings if sheet.name == best_sheet.name)
@@ -1206,7 +1419,12 @@ def extract_report(report_id: str) -> dict[str, Any]:
                     )
                     continue
 
-                nearby_values = _nearby_numeric_values(best_sheet, row_match["row_index"], column_match["col_index"])
+                matched_row_values = best_sheet.rows[row_match["row_index"]]
+                exact_value = _to_numeric(matched_row_values[column_match["col_index"]] if column_match["col_index"] < len(matched_row_values) else None)
+                if exact_value is not None:
+                    nearby_values = [(exact_value, f"R{row_match['row_index'] + 1}C{column_match['col_index'] + 1}")]
+                else:
+                    nearby_values = _nearby_numeric_values(best_sheet, row_match["row_index"], column_match["col_index"])
                 if not nearby_values:
                     record_result(
                         report_id=report_id,
@@ -1249,7 +1467,7 @@ def extract_report(report_id: str) -> dict[str, Any]:
                             0.89,
                         )
                         year = int(context.get("target_year") or dashboard_year(mapping, report.get("publication_year")) or datetime.now().year)
-                        old_value = get_current_dashboard_value(mapping["indicator"], mapping.get("series_code"), year)
+                        old_value = get_current_dashboard_value(mapping["indicator"], mapping.get("series_code"), year, target=mapping)
                         difference = None if old_value is None else extracted_value - old_value
                         extraction_note = "OpenRouter suggested the most likely value from multiple nearby cells; staff approval required"
                         if value_ai_note:
@@ -1309,6 +1527,7 @@ def extract_report(report_id: str) -> dict[str, Any]:
                             mapping["indicator"],
                             mapping.get("series_code"),
                             int(context.get("target_year") or report.get("publication_year") or datetime.now().year),
+                            target=mapping,
                         ),
                         status="Needs Review",
                         confidence_score=min(row_match["score"], column_match["score"]),
@@ -1354,7 +1573,7 @@ def extract_report(report_id: str) -> dict[str, Any]:
                     result_status = "ambiguous_match"
                     match_reason = f"{match_reason}; {sheet_ai_note}; staff approval required"
                 year = int(context.get("target_year") or dashboard_year(mapping, report.get("publication_year")) or datetime.now().year)
-                old_value = get_current_dashboard_value(mapping["indicator"], mapping.get("series_code"), year)
+                old_value = get_current_dashboard_value(mapping["indicator"], mapping.get("series_code"), year, target=mapping)
                 difference = None if old_value is None else extracted_value - old_value
                 update_id, proposal_status, warnings = _insert_proposed_update(
                     report_id=report_id,
@@ -1398,7 +1617,7 @@ def extract_report(report_id: str) -> dict[str, Any]:
                 continue
 
             year = int(dashboard_year(mapping, candidate["year"]) or candidate["year"])
-            old_value = get_current_dashboard_value(mapping["indicator"], mapping.get("series_code"), year)
+            old_value = get_current_dashboard_value(mapping["indicator"], mapping.get("series_code"), year, target=mapping)
             new_value = float(candidate["new_value"])
             difference = None if old_value is None else new_value - old_value
             result_status = "extracted"

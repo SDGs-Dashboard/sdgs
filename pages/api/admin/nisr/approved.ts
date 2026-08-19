@@ -1,3 +1,4 @@
+// Legacy/local Next.js approved-data route backed by lib/admin JSON services.
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { parseQueryString } from '../../../../lib/admin/api';

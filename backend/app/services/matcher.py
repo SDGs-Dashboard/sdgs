@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Text matching helpers shared by Excel and PDF extraction.
+
+Matching is intentionally layered: exact matches are preferred, cleaned text
+matches handle spacing/punctuation differences, and fuzzy scores are treated as
+suggestions that need review when confidence is not strong enough.
+"""
+
 import re
 from typing import Any
 
@@ -35,6 +42,48 @@ def cleaned_match(left: Any, right: Any) -> bool:
     return bool(left_value and right_value and left_value == right_value)
 
 
+def reference_text_variants(value: Any) -> list[str]:
+    """Expand a mapping reference into searchable aliases.
+
+    Mapping cells often contain combined values such as table number, title,
+    page, report family, and notes separated by pipes. Extractors use these
+    aliases to find the same table even when report wording is slightly different.
+    """
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return []
+
+    variants: list[str] = []
+
+    def add(candidate: Any) -> None:
+        normalized = " ".join(str(candidate or "").replace("\n", " ").split()).strip(" ,;")
+        if normalized and normalized not in variants:
+            variants.append(normalized)
+
+    for piece in re.split(r"\s*\|\s*|;\s*", raw_value):
+        compact_piece = " ".join(piece.replace("\n", " ").split()).strip()
+        if not compact_piece:
+            continue
+        add(compact_piece)
+
+        for match in re.finditer(r"\b(table|figure)\s*([a-z0-9]+(?:\s*\.\s*[a-z0-9]+)*)(?:\.)?", compact_piece, re.IGNORECASE):
+            item_type, number = match.groups()
+            normalized_number = re.sub(r"\s*\.\s*", ".", number.strip()).rstrip(".")
+            item_reference = f"{item_type.title()} {normalized_number}"
+            add(item_reference)
+
+            remainder = compact_piece[match.end() :]
+            title = re.split(r",?\s*p\.?\s*\d+|,\s*(?:eicv|nisr|rwanda)\b", remainder, maxsplit=1, flags=re.IGNORECASE)[0]
+            title = title.strip(" ,:.-")
+            if title:
+                add(f"{item_reference}: {title}")
+                add(title)
+                title_before_survey = re.split(r"\s*[—-]\s*eicv|\s*,", title, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+                add(title_before_survey)
+
+    return variants
+
+
 def fuzzy_score(left: Any, right: Any) -> float:
     left_value = normalize_text(left)
     right_value = normalize_text(right)
@@ -61,6 +110,7 @@ def score_match(
     series_code_match: bool = False,
     indicator_code_match: bool = False,
 ) -> tuple[float, str]:
+    """Score a candidate match and explain which metadata matched."""
     if fuzzy_only:
         return 0.55, "Fuzzy text suggestion only"
 

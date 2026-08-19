@@ -1,3 +1,4 @@
+// Legacy/local Next.js review-queue route backed by lib/admin JSON services.
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { parseQueryString } from '../../../../lib/admin/api';

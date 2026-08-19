@@ -1,3 +1,4 @@
+// File paths and constants for the legacy/local admin API layer.
 import path from 'path';
 
 export const ADMIN_DB_PATH = path.join(process.cwd(), 'data', 'admin', 'ingestion_db.json');

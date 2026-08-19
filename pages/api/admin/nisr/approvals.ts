@@ -1,3 +1,4 @@
+// Legacy/local Next.js approval route backed by lib/admin JSON services.
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { applyReviewAction } from '../../../../lib/admin/nisrService';

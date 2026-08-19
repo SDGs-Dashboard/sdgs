@@ -1,3 +1,4 @@
+// Rwanda administrative names and aliases used for deterministic location checks.
 export const RWANDA_PROVINCES = [
   'Kigali City',
   'East Province',

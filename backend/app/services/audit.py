@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Audit-log helper for uploads, extraction, edits, approvals, and exports."""
+
 from datetime import datetime, timezone
 from typing import Any
 

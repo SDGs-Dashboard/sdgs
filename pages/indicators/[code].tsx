@@ -1,3 +1,6 @@
+// Public indicator detail page.
+// Static props provide trend/disaggregation/metadata from the SDG workbook; the
+// source evidence panel can use a public API locally or preloaded data in static export mode.
 import { useState } from 'react';
 
 import { useRouter } from 'next/router';
@@ -62,6 +65,7 @@ export default function IndicatorDetailPage({
   const { summary, metadata, trend, disaggregation, downloadableRows } = detail;
 
   const downloadIndicatorData = () => {
+    // Export the already-rendered indicator observations, avoiding any backend dependency.
     const headers = Object.keys(downloadableRows[0] || {});
     const rows = downloadableRows.map((row) => headers.map((header) => row[header] as string | number | null));
     const csv = [headers, ...rows].map((line) => line.map(toCsvCell).join(',')).join('\n');
@@ -80,6 +84,8 @@ export default function IndicatorDetailPage({
       : `${Math.max(0, Math.min(100, Math.round(summary.targetProgressPercent)))}%`;
 
   const loadSources = async () => {
+    // GitHub Pages cannot run API routes, so static exports use preloaded source rows.
+    // Local/Node deployments can fetch source evidence lazily from the public API route.
     if (isStaticExport) {
       setSourceRows(initialSourceRows);
       return;

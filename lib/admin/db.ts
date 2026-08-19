@@ -1,3 +1,6 @@
+// JSON-file persistence for the legacy/local Next.js admin API.
+// Current FastAPI automation uses SQLite/Postgres; this remains for local source
+// evidence and compatibility routes.
 import fs from 'fs';
 import path from 'path';
 

@@ -1,3 +1,6 @@
+// Public indicator results table used by the Indicator Explorer.
+// The rows are already filtered/sorted by the page; this component only renders
+// values, status labels, and source navigation.
 import Link from 'next/link';
 
 import { formatNumber, publicStatusLabel, statusClassName } from '../utils/format';

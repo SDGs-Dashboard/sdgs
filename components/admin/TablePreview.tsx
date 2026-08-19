@@ -1,3 +1,6 @@
+// Raw extracted table preview used during admin review.
+// It intentionally shows the original grid beside structured data so reviewers
+// can compare the proposed value against the source layout.
 interface TablePreviewProps {
   title: string;
   grid: string[][];

@@ -1,3 +1,4 @@
+// Legacy/local admin data models used by JSON-backed Next.js API helpers.
 export type NisrFileType = 'pdf' | 'excel' | 'csv';
 
 export type NisrProcessingStatus =

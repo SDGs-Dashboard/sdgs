@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Read-only admin data endpoints for approvals, audit log, and history."""
+
 from fastapi import APIRouter
 
 from ..database import fetch_all

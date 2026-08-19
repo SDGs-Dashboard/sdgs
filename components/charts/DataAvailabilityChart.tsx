@@ -1,3 +1,5 @@
+// Goal-level progress chart.
+// Despite the historical component name, this now displays target progress by SDG goal.
 import {
   Bar,
   BarChart,

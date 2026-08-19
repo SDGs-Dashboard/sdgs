@@ -1,3 +1,5 @@
+// Sticky public dashboard header.
+// Provides mobile navigation, indicator search suggestions, and quick goal/year filters.
 import { FormEvent, useMemo, useState } from 'react';
 
 import Image from 'next/image';
@@ -29,6 +31,8 @@ export function Header({ title, onOpenSidebar, searchItems, years, goals }: Head
   const yearQuery = String(router.query.year ?? '');
 
   const suggestions = useMemo(() => {
+    // Search locally over prebuilt indicator summaries so the static site has no
+    // runtime dependency on a search backend.
     const query = searchText.trim().toLowerCase();
     if (!query || query.length < 2) {
       return [];
@@ -57,6 +61,7 @@ export function Header({ title, onOpenSidebar, searchItems, years, goals }: Head
   };
 
   const updateQueryValue = (key: 'goal' | 'year', value: string) => {
+    // Shallow routing updates filters without forcing a full page reload.
     const nextQuery = {
       ...router.query,
       [key]: value || undefined
@@ -89,24 +94,24 @@ export function Header({ title, onOpenSidebar, searchItems, years, goals }: Head
             <FiMenu />
           </button>
           <div>
-            <div className="mb-2 flex items-center gap-2.5">
-              <div className="rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm">
+            <div className="mb-2 flex items-center gap-2">
+              <div className="relative h-10 w-[58px] overflow-hidden rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm">
                 <Image
                   src={withBasePath('/brand/rwanda-flag.svg')}
                   alt="Flag of Rwanda"
-                  width={45}
-                  height={30}
-                  className="h-7 w-auto rounded-[3px]"
+                  fill
+                  className="object-contain p-0.5"
+                  sizes="58px"
                   priority
                 />
               </div>
-              <div className="rounded-full border border-slate-200 bg-white p-1.5 shadow-sm">
+              <div className="relative h-10 w-10 overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm">
                 <Image
                   src={withBasePath('/brand/sdg-wheel.png')}
                   alt="United Nations Sustainable Development Goals wheel"
-                  width={32}
-                  height={32}
-                  className="h-8 w-8"
+                  fill
+                  className="object-contain scale-[1.12]"
+                  sizes="40px"
                   priority
                 />
               </div>

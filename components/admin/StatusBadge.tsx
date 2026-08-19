@@ -1,3 +1,5 @@
+// Shared status badge for admin automation records.
+// Normalization lets backend statuses use spaces, hyphens, or underscores.
 const CLASS_MAP: Record<string, string> = {
   uploaded: 'bg-sky-100 text-sky-800',
   processing: 'bg-amber-100 text-amber-800',

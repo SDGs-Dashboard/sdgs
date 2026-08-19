@@ -1,3 +1,4 @@
+// Standard empty-state message used when a chart/table has no publishable data yet.
 interface EmptyStateProps {
   title: string;
   message: string;
@@ -11,4 +12,3 @@ export function EmptyState({ title, message }: EmptyStateProps): JSX.Element {
     </div>
   );
 }
-

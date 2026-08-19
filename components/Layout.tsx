@@ -1,3 +1,5 @@
+// Shared public dashboard shell.
+// It combines the sidebar, sticky header, global search filters, and page body.
 import { ReactNode, useMemo, useState } from 'react';
 
 import { Header } from './Header';
@@ -14,6 +16,7 @@ interface LayoutProps {
 export function Layout({ title, children, searchItems, years, goals }: LayoutProps): JSX.Element {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // Limit search suggestions passed to the header to keep typing responsive.
   const stableSearchItems = useMemo(() => searchItems.slice(0, 600), [searchItems]);
 
   return (
@@ -33,4 +36,3 @@ export function Layout({ title, children, searchItems, years, goals }: LayoutPro
     </div>
   );
 }
-

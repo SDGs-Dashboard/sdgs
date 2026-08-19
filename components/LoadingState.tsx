@@ -1,3 +1,4 @@
+// Lightweight loading panel for client-side fetches.
 export function LoadingState({ message = 'Loading dashboard data...' }: { message?: string }): JSX.Element {
   return (
     <div className="panel flex items-center gap-3 px-5 py-4">
@@ -6,4 +7,3 @@ export function LoadingState({ message = 'Loading dashboard data...' }: { messag
     </div>
   );
 }
-

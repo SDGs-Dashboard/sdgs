@@ -1,3 +1,5 @@
+// Time-series chart for one indicator.
+// Receives already-cleaned year/value points from utils/sdgData.
 import {
   CartesianGrid,
   Legend,
@@ -44,4 +46,3 @@ export function TrendChart({ title = 'Indicator trend', data, lineColor = '#00A1
     </div>
   );
 }
-

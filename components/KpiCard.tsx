@@ -1,3 +1,5 @@
+// Reusable dashboard metric card.
+// Used for headline counts and rates across the public and admin screens.
 import { ReactNode } from 'react';
 
 interface KpiCardProps {
@@ -27,4 +29,3 @@ export function KpiCard({ label, value, helper, icon, accent = 'neutral' }: KpiC
     </div>
   );
 }
-

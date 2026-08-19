@@ -1,3 +1,6 @@
+// Data availability page placeholder.
+// The national overview already shows coverage; this route is kept for a future
+// dedicated coverage publication and intentionally returns 404 for now.
 import type { GetStaticProps } from 'next';
 
 import { DataAvailabilityChart } from '../components/charts/DataAvailabilityChart';
@@ -92,6 +95,7 @@ export default function DataAvailabilityPage({
 }
 
 export const getStaticProps: GetStaticProps<DataAvailabilityPageProps> = async () => {
+  // Preserve the implementation while hiding the page from public builds.
   return {
     notFound: true
   };

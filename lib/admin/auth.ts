@@ -1,3 +1,5 @@
+// Cookie-based admin auth helpers for local Next.js API routes.
+// The FastAPI backend has its own auth layer for the current NISR automation API.
 import crypto from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 

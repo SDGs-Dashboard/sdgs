@@ -1,3 +1,5 @@
+// Admin approved-data screen.
+// Shows values that have passed staff approval plus audit/version history exports.
 import { useEffect, useMemo, useState } from 'react';
 
 import { NisrAdminLayout } from '../../../components/admin/NisrAdminLayout';

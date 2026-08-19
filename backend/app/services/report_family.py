@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Report-family matching helpers.
+
+Prevents an uploaded EICV/DHS/census report from being matched against mappings
+for a different data source just because table text happens to look similar.
+"""
+
 import re
 from typing import Any
 

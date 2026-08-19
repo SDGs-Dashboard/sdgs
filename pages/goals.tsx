@@ -1,3 +1,6 @@
+// Public SDG goal performance page.
+// Goal cards summarize indicator coverage and progress using the prebuilt
+// dashboard dataset rather than making runtime API calls.
 import type { GetStaticProps } from 'next';
 
 import { Layout } from '../components/Layout';
@@ -32,6 +35,7 @@ export default function GoalsPage({ searchItems, years, goalsFilter, goals }: Go
 }
 
 export const getStaticProps: GetStaticProps<GoalsPageProps> = async () => {
+  // Static generation makes the goal overview safe for GitHub Pages hosting.
   const dataset = getDashboardDataset();
 
   return {

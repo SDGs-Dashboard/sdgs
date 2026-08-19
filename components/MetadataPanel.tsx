@@ -1,3 +1,5 @@
+// Indicator metadata panel.
+// Metadata comes from meta/*.md and is merged with workbook values at build time.
 import { formatDateLabel } from '../utils/format';
 import { IndicatorMetadata } from '../utils/types';
 
@@ -55,4 +57,3 @@ export function MetadataPanel({ metadata }: MetadataPanelProps): JSX.Element {
     </div>
   );
 }
-

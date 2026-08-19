@@ -1,3 +1,5 @@
+// Latest disaggregation chart for an indicator.
+// The data service chooses the most useful non-time dimension with available values.
 import {
   Bar,
   BarChart,
@@ -30,4 +32,3 @@ export function DisaggregationChart({ data }: { data: DisaggregationData }): JSX
     </div>
   );
 }
-

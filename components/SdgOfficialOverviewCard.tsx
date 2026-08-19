@@ -1,7 +1,9 @@
+// Compact SDG goal card used on the National Overview page.
+// It keeps official SDG imagery prominent while showing a lightweight progress summary.
 import Image from 'next/image';
 import Link from 'next/link';
 
-import { formatPercent, publicStatusLabel, statusClassName } from '../utils/format';
+import { goalProgressLabel, progressStatusColor, publicStatusLabel, statusClassName } from '../utils/format';
 import { withBasePath } from '../utils/site';
 import { GoalSummary } from '../utils/types';
 
@@ -10,6 +12,7 @@ interface SdgOfficialOverviewCardProps {
 }
 
 export function SdgOfficialOverviewCard({ goal }: SdgOfficialOverviewCardProps): JSX.Element {
+  // Clamp visual progress to avoid overflowing the card if a goal exceeds 100%.
   const safeProgress = Math.max(0, Math.min(100, goal.targetProgressPercent));
   const visibleStatus = publicStatusLabel(goal.status);
 
@@ -42,13 +45,15 @@ export function SdgOfficialOverviewCard({ goal }: SdgOfficialOverviewCardProps):
 
       <div className="mt-2 flex items-center justify-between text-xs text-slate-600">
         <span>{goal.indicatorCount} indicators</span>
-        <span className="font-semibold text-slate-900">{formatPercent(goal.targetProgressPercent)}</span>
+        <span className="max-w-[120px] text-right text-[11px] font-semibold leading-tight text-slate-700">
+          {goalProgressLabel(goal)}
+        </span>
       </div>
 
       <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
         <div
           className="h-full rounded-full transition-all duration-300"
-          style={{ width: `${safeProgress}%`, backgroundColor: goal.color }}
+          style={{ width: `${safeProgress}%`, backgroundColor: progressStatusColor(goal.status) }}
         />
       </div>
     </Link>

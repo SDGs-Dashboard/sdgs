@@ -42,6 +42,13 @@ styles/                   Global styles
 utils/                    Shared utilities
 ```
 
+## Developer documentation
+
+- Full codebase guide: `docs/CODEBASE_GUIDE.md`
+- NISR automation code guide: `docs/NISR_AUTOMATION_CODE_GUIDE.md`
+- Local automation backend guide: `docs/README.md`
+- Dashboard presentation notes: `docs/Rwanda_SDG_Dashboard_Explained_Presentation.md`
+
 ## Main data files
 
 - Dashboard workbook: `data/2025_RW-SDG_Data.xlsx`

@@ -1,3 +1,6 @@
+// Legacy/local NISR service functions for Next.js API routes.
+// The FastAPI backend is the primary automation engine, but these helpers still
+// support local JSON workflows and public source evidence routes.
 import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';

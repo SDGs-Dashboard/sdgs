@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""FastAPI entry point for the NISR SDG automation backend.
+
+The public dashboard can be static, but upload/extraction/review/approval/export
+need this backend running locally or on a hosted Python service.
+"""
+
 import os
 
 from fastapi import FastAPI, Request
@@ -16,6 +22,7 @@ app = FastAPI(title="NISR SDG Automation", version="0.1.0")
 
 
 def cors_origins() -> list[str]:
+    """Read allowed frontend origins for local and hosted admin deployments."""
     configured = os.getenv("BACKEND_CORS_ORIGINS", "").strip()
     if configured:
         return [origin.strip() for origin in configured.split(",") if origin.strip()]
@@ -45,6 +52,7 @@ async def allow_private_network_access(request: Request, call_next):
 
 @app.middleware("http")
 async def require_admin_auth(request: Request, call_next):
+    """Protect all automation API routes except health and auth endpoints."""
     if request.method == "OPTIONS":
         return await call_next(request)
 
